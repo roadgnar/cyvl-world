@@ -194,6 +194,39 @@
     color: var(--cyan);
   }
 
+  /* Section headers */
+  .arcade-section {
+    width: 100%;
+    max-width: 1200px;
+    margin-bottom: 60px;
+  }
+  .section-title {
+    text-align: center;
+    font-size: 1.4rem;
+    color: var(--cyan);
+    letter-spacing: 6px;
+    margin-bottom: 6px;
+    text-shadow: 0 0 15px rgba(0,229,255,0.5);
+  }
+  .section-title--classic {
+    color: var(--orange);
+    text-shadow: 0 0 15px rgba(255,102,0,0.5);
+  }
+  .section-icon {
+    font-size: 0.8rem;
+    vertical-align: middle;
+  }
+  .section-desc {
+    text-align: center;
+    font-size: 0.75rem;
+    color: var(--cyan-dark);
+    letter-spacing: 3px;
+    margin-bottom: 28px;
+  }
+  .section-desc--classic {
+    color: #885522;
+  }
+
   /* Responsive */
   @media (max-width: 480px) {
     .arcade-title { font-size: 2.2rem; letter-spacing: 6px; }
@@ -214,7 +247,17 @@
     <p class="arcade-subtitle">SELECT YOUR MISSION</p>
   </header>
 
-  <main class="game-grid" id="gameGrid"></main>
+  <section class="arcade-section">
+    <h2 class="section-title"><span class="section-icon">&#9670;</span> CYVL ORIGINALS <span class="section-icon">&#9670;</span></h2>
+    <p class="section-desc">Built for infrastructure. Powered by real data.</p>
+    <div class="game-grid" id="gridCyvl"></div>
+  </section>
+
+  <section class="arcade-section">
+    <h2 class="section-title section-title--classic"><span class="section-icon">&#9670;</span> CLASSICS <span class="section-icon">&#9670;</span></h2>
+    <p class="section-desc section-desc--classic">Retro arcade favorites with an infrastructure twist.</p>
+    <div class="game-grid" id="gridClassics"></div>
+  </section>
 
   <footer class="arcade-footer">
     <p><a href="https://cyvl.ai">cyvl.ai</a> &mdash; making the physical world legible to AI</p>
@@ -349,7 +392,8 @@
 // ============================================================
 // Initialize
 // ============================================================
-renderGameCards('gameGrid');
+renderGameCards('gridCyvl', 'cyvl');
+renderGameCards('gridClassics', 'classic');
 bindCardEvents();
 
 // Load mini-leaderboards on game cards

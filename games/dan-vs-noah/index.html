@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>DAN vs NOAH — Budget Brawl</title>
+<title>BUDGET BRAWL — Revenue vs Red Tape</title>
 <script defer src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script defer src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 <script defer src="/shared/leaderboard.js"></script>
@@ -31,7 +31,7 @@ canvas {
 <canvas id="game"></canvas>
 <script>
 // ============================================================
-// DAN vs NOAH — BUDGET BRAWL
+// BUDGET BRAWL — Revenue vs Red Tape
 // A CYVL Arcade Original
 // ============================================================
 
@@ -1315,7 +1315,7 @@ function nextLevel() {
 function endGame() {
   gameState = STATE.GAME_OVER;
   playSound('gameOver');
-  if (window.submitScore) window.submitScore('dan-vs-noah', score);
+  if (window.submitScore) window.submitScore('budget-brawl', score);
 }
 
 function getGrade(s) {
@@ -1440,7 +1440,7 @@ function drawHUD() {
   ctx.fillStyle = COL.red;
   ctx.font = 'bold 12px Courier New';
   ctx.textAlign = 'right';
-  ctx.fillText('DANS: ' + dans.length, W - 15, H - 25);
+  ctx.fillText('VPs: ' + dans.length, W - 15, H - 25);
 }
 
 // ============================================================
@@ -1514,29 +1514,24 @@ function drawTitle() {
     ctx.stroke();
   }
 
-  // Title: DAN vs NOAH
+  // Title: BUDGET BRAWL
   const titleY = 180;
 
-  // DAN (red side)
+  // BUDGET (red side)
   ctx.fillStyle = COL.red;
-  ctx.font = 'bold 72px Courier New';
+  ctx.font = 'bold 56px Courier New';
   ctx.textAlign = 'center';
-  ctx.fillText('DAN', W/2 - 130, titleY);
+  ctx.fillText('BUDGET', W/2, titleY - 30);
 
-  // vs
-  ctx.fillStyle = COL.white;
-  ctx.font = 'bold 36px Courier New';
-  ctx.fillText('vs', W/2, titleY - 5);
-
-  // NOAH (green side)
+  // BRAWL (green side)
   ctx.fillStyle = COL.green;
-  ctx.font = 'bold 72px Courier New';
-  ctx.fillText('NOAH', W/2 + 140, titleY);
+  ctx.font = 'bold 56px Courier New';
+  ctx.fillText('BRAWL', W/2, titleY + 30);
 
   // Subtitle
   ctx.fillStyle = COL.gold;
-  ctx.font = 'bold 28px Courier New';
-  ctx.fillText('BUDGET BRAWL', W / 2, titleY + 50);
+  ctx.font = 'bold 22px Courier New';
+  ctx.fillText('REVENUE vs RED TAPE', W / 2, titleY + 65);
 
   // CYVL label
   ctx.fillStyle = COL.cyan;
@@ -1584,10 +1579,10 @@ function drawTitle() {
   ctx.font = 'bold 12px Courier New';
   ctx.fillText('VP', danX, charY - 30);
 
-  // Dan label
+  // VP label
   ctx.fillStyle = COL.red;
   ctx.font = 'bold 14px Courier New';
-  ctx.fillText('DAN McCARTHY', danX, charY + 45);
+  ctx.fillText('THE VP', danX, charY + 45);
   ctx.font = '11px Courier New';
   ctx.fillStyle = COL.orange;
   ctx.fillText('VP of Product', danX, charY + 60);
@@ -1635,10 +1630,10 @@ function drawTitle() {
   ctx.font = 'bold 14px Courier New';
   ctx.fillText('$', noahX, charY - 34 + Math.sin(titleTime * 3) * 3);
 
-  // Noah label
+  // Closer label
   ctx.fillStyle = COL.green;
   ctx.font = 'bold 14px Courier New';
-  ctx.fillText('NOAH B', noahX, charY + 45);
+  ctx.fillText('THE CLOSER', noahX, charY + 45);
   ctx.font = '11px Courier New';
   ctx.fillStyle = COL.gold;
   ctx.fillText('The Money King', noahX, charY + 60);
@@ -1668,12 +1663,12 @@ function drawTitle() {
   ctx.fillStyle = '#666688';
   ctx.font = '12px Courier New';
   ctx.fillText('WASD / ARROWS = Move    SPACE = Sprint    SHIFT / Right-Click = Pivot', W / 2, 570);
-  ctx.fillText('Collect contracts and deals. Avoid Dan McCarthy at all costs!', W / 2, 590);
+  ctx.fillText('Collect contracts and deals. Avoid the VP at all costs!', W / 2, 590);
 
   // Flavor text
   ctx.fillStyle = COL.cyan + '88';
   ctx.font = '10px Courier New';
-  ctx.fillText('Noah collects revenue. Dan destroys budgets. Only one can win.', W / 2, 640);
+  ctx.fillText('The Closer collects revenue. The VP destroys budgets. Only one can win.', W / 2, 640);
   ctx.fillText('"In the startup world, the VP of Product is the final boss." - Ancient Proverb', W / 2, 660);
 
   drawScanlines();
@@ -1717,15 +1712,15 @@ function drawLevelComplete() {
   const danQuote = DAN_QUOTES[Math.floor((level - 1 + score) % DAN_QUOTES.length)];
   ctx.fillStyle = COL.red;
   ctx.font = 'bold 14px Courier New';
-  ctx.fillText('DAN:', W/2, 310);
+  ctx.fillText('THE VP:', W/2, 310);
   ctx.font = 'italic 14px Courier New';
   ctx.fillText('"' + danQuote + '"', W/2, 335);
 
-  // Noah quote
+  // Closer quote
   const noahQuote = NOAH_QUOTES[Math.floor((level + score) % NOAH_QUOTES.length)];
   ctx.fillStyle = COL.green;
   ctx.font = 'bold 14px Courier New';
-  ctx.fillText('NOAH:', W/2, 390);
+  ctx.fillText('THE CLOSER:', W/2, 390);
   ctx.font = 'italic 14px Courier New';
   ctx.fillText('"' + noahQuote + '"', W/2, 415);
 
@@ -1733,7 +1728,7 @@ function drawLevelComplete() {
   if (level < MAX_LEVEL) {
     ctx.fillStyle = COL.orange;
     ctx.font = '14px Courier New';
-    ctx.fillText('NEXT: ' + LEVEL_NAMES[level] + ' (' + (level + 1) + ' Dans incoming!)', W/2, 480);
+    ctx.fillText('NEXT: ' + LEVEL_NAMES[level] + ' (' + (level + 1) + ' VPs incoming!)', W/2, 480);
   } else {
     ctx.fillStyle = COL.gold;
     ctx.font = 'bold 18px Courier New';
@@ -1796,31 +1791,31 @@ function drawGameOver() {
   // Grade label
   ctx.font = '16px Courier New';
   const gradeLabels = {
-    'S': 'UNICORN STATUS - Noah is a legend!',
+    'S': 'UNICORN STATUS - The Closer is a legend!',
     'A': 'Series D incoming! Investors are thrilled.',
     'B': 'Solid growth. The board is cautiously optimistic.',
-    'C': 'Mediocre quarter. Dan keeps scheduling meetings.',
-    'D': 'Struggling. Maybe Dan was right about that pivot.',
-    'F': 'Bankrupt. Dan won. He always wins.',
+    'C': 'Mediocre quarter. The VP keeps scheduling meetings.',
+    'D': 'Struggling. Maybe the VP was right about that pivot.',
+    'F': 'Bankrupt. The VP won. They always win.',
   };
   ctx.fillText(gradeLabels[grade], W/2, 380);
 
   // Fun stats
   ctx.fillStyle = '#888';
   ctx.font = '12px Courier New';
-  ctx.fillText('Dans defeated: 0 (they always come back)', W/2, 440);
+  ctx.fillText('VPs defeated: 0 (they always come back)', W/2, 440);
   ctx.fillText('Meetings survived: too many', W/2, 460);
   ctx.fillText('Emails dodged: not enough', W/2, 480);
 
   // Dan's final quote
   ctx.fillStyle = COL.red;
   ctx.font = 'italic 14px Courier New';
-  ctx.fillText('Dan: "I\'ll see you at the next quarterly review."', W/2, 530);
+  ctx.fillText('The VP: "I\'ll see you at the next quarterly review."', W/2, 530);
 
-  // Noah's final quote
+  // Closer's final quote
   ctx.fillStyle = COL.green;
   ctx.font = 'italic 14px Courier New';
-  ctx.fillText('Noah: "I need a raise. And a vacation."', W/2, 560);
+  ctx.fillText('The Closer: "I need a raise. And a vacation."', W/2, 560);
 
   // Press Enter
   const blink = Math.sin(performance.now() / 300) > 0;

@@ -3,6 +3,7 @@
 // ============================================================
 
 var ARCADE_GAMES = [
+  // ---- CYVL ORIGINALS ----
   {
     id: 'infrastructure-wars',
     title: 'INFRASTRUCTURE WARS',
@@ -10,61 +11,8 @@ var ARCADE_GAMES = [
     description: 'Twin-stick shooter. Scan roads with LiDAR. Defeat snow plows. Liberate cities for AI.',
     path: '/games/infrastructure-wars/',
     tags: ['SHOOTER', 'ACTION', 'DESKTOP'],
-    colors: { primary: '#00e5ff', secondary: '#00ff88', accent: '#ff6600' }
-  },
-  {
-    id: 'whac-a-pothole',
-    title: 'WHAC-A-POTHOLE',
-    subtitle: 'Infrastructure Defense Unit',
-    description: 'Potholes are popping up everywhere! Click fast to patch them before the roads crumble.',
-    path: '/games/whac-a-pothole/',
-    tags: ['ARCADE', 'CASUAL'],
-    colors: { primary: '#ff6600', secondary: '#00ff88', accent: '#00e5ff' }
-  },
-  {
-    id: 'hangman',
-    title: 'INFRASTRUCTURE HANGMAN',
-    subtitle: 'Save the Bridge',
-    description: 'Guess infrastructure words before the bridge collapses. 8 guesses. No hard hats required.',
-    path: '/games/hangman/',
-    tags: ['WORD', 'CASUAL'],
-    colors: { primary: '#00e5ff', secondary: '#ff2244', accent: '#00ff88' }
-  },
-  {
-    id: 'road-invaders',
-    title: 'ROAD INVADERS',
-    subtitle: 'Defend the Pavement',
-    description: 'Waves of potholes, cones, and paperwork descend from above. Blast them with asphalt patches!',
-    path: '/games/road-invaders/',
-    tags: ['SHOOTER', 'CLASSIC'],
-    colors: { primary: '#aa44ff', secondary: '#ff6600', accent: '#00e5ff' }
-  },
-  {
-    id: 'fiber-snake',
-    title: 'FIBER SNAKE',
-    subtitle: 'Lay the Line',
-    description: 'Lay fiber optic cable through the city grid. Collect data nodes. Don\'t cross your own line.',
-    path: '/games/fiber-snake/',
-    tags: ['CLASSIC', 'CASUAL'],
-    colors: { primary: '#00e5ff', secondary: '#00ff88', accent: '#ffd700' }
-  },
-  {
-    id: 'cone-crusher',
-    title: 'CONE CRUSHER',
-    subtitle: 'Infrastructure Demolition',
-    description: 'Smash through traffic cones, barriers, and signs with your wrecking ball. 5 levels of breakout.',
-    path: '/games/cone-crusher/',
-    tags: ['ARCADE', 'CLASSIC'],
-    colors: { primary: '#ff6600', secondary: '#ffee00', accent: '#00e5ff' }
-  },
-  {
-    id: 'road-reckoning',
-    title: 'ROAD RECKONING',
-    subtitle: 'Pavement Strike Force',
-    description: 'QA annotation gamification. Eliminate bad labels, discover missing objects, reclassify errors. 4 modes.',
-    path: '/games/road-reckoning/',
-    tags: ['STRATEGY', 'QA', 'DESKTOP'],
-    colors: { primary: '#00e5ff', secondary: '#ff2244', accent: '#00ff88' }
+    colors: { primary: '#00e5ff', secondary: '#00ff88', accent: '#ff6600' },
+    category: 'cyvl'
   },
   {
     id: 'somerville-siege',
@@ -73,8 +21,30 @@ var ARCADE_GAMES = [
     description: 'Defend Somerville\'s real roads from infrastructure decay. 500 real streets, actual PCI data, 5 waves of chaos.',
     path: '/games/somerville-siege/',
     tags: ['ACTION', 'REAL DATA', 'DESKTOP'],
-    colors: { primary: '#00e5ff', secondary: '#ff2244', accent: '#00ff88' }
+    colors: { primary: '#00e5ff', secondary: '#ff2244', accent: '#00ff88' },
+    category: 'cyvl'
   },
+  {
+    id: 'road-reckoning',
+    title: 'ROAD RECKONING',
+    subtitle: 'Pavement Strike Force',
+    description: 'QA annotation gamification. Eliminate bad labels, discover missing objects, reclassify errors. 4 modes.',
+    path: '/games/road-reckoning/',
+    tags: ['STRATEGY', 'QA', 'DESKTOP'],
+    colors: { primary: '#00e5ff', secondary: '#ff2244', accent: '#00ff88' },
+    category: 'cyvl'
+  },
+  {
+    id: 'budget-brawl',
+    title: 'BUDGET BRAWL',
+    subtitle: 'Revenue vs Red Tape',
+    description: 'The Closer hustles to earn revenue. The VP chases them down to burn it. Survive the synergy.',
+    path: '/games/dan-vs-noah/',
+    tags: ['ACTION', 'COMEDY'],
+    colors: { primary: '#00ff88', secondary: '#ff2244', accent: '#ffd700' },
+    category: 'cyvl'
+  },
+  // ---- CLASSICS ----
   {
     id: 'infra-frogger',
     title: 'INFRA-FROGGER',
@@ -82,27 +52,70 @@ var ARCADE_GAMES = [
     description: 'Guide your LiDAR van across traffic, construction zones, and utility hazards. 5 cities. Don\'t get flattened.',
     path: '/games/infra-frogger/',
     tags: ['CLASSIC', 'ARCADE'],
-    colors: { primary: '#00e5ff', secondary: '#ff6600', accent: '#00ff88' }
+    colors: { primary: '#00e5ff', secondary: '#ff6600', accent: '#00ff88' },
+    category: 'classic'
   },
   {
-    id: 'dan-vs-noah',
-    title: 'DAN vs NOAH',
-    subtitle: 'Budget Brawl',
-    description: 'Noah B hustles to earn revenue. Dan McCarthy (VP of Product) chases him down to burn it. Survive the synergy.',
-    path: '/games/dan-vs-noah/',
-    tags: ['ACTION', 'COMEDY'],
-    colors: { primary: '#00ff88', secondary: '#ff2244', accent: '#ffd700' }
+    id: 'road-invaders',
+    title: 'ROAD INVADERS',
+    subtitle: 'Defend the Pavement',
+    description: 'Waves of potholes, cones, and paperwork descend from above. Blast them with asphalt patches!',
+    path: '/games/road-invaders/',
+    tags: ['SHOOTER', 'CLASSIC'],
+    colors: { primary: '#aa44ff', secondary: '#ff6600', accent: '#00e5ff' },
+    category: 'classic'
+  },
+  {
+    id: 'whac-a-pothole',
+    title: 'WHAC-A-POTHOLE',
+    subtitle: 'Infrastructure Defense Unit',
+    description: 'Potholes are popping up everywhere! Click fast to patch them before the roads crumble.',
+    path: '/games/whac-a-pothole/',
+    tags: ['ARCADE', 'CASUAL'],
+    colors: { primary: '#ff6600', secondary: '#00ff88', accent: '#00e5ff' },
+    category: 'classic'
+  },
+  {
+    id: 'cone-crusher',
+    title: 'CONE CRUSHER',
+    subtitle: 'Infrastructure Demolition',
+    description: 'Smash through traffic cones, barriers, and signs with your wrecking ball. 5 levels of breakout.',
+    path: '/games/cone-crusher/',
+    tags: ['ARCADE', 'CLASSIC'],
+    colors: { primary: '#ff6600', secondary: '#ffee00', accent: '#00e5ff' },
+    category: 'classic'
+  },
+  {
+    id: 'fiber-snake',
+    title: 'FIBER SNAKE',
+    subtitle: 'Lay the Line',
+    description: 'Lay fiber optic cable through the city grid. Collect data nodes. Don\'t cross your own line.',
+    path: '/games/fiber-snake/',
+    tags: ['CLASSIC', 'CASUAL'],
+    colors: { primary: '#00e5ff', secondary: '#00ff88', accent: '#ffd700' },
+    category: 'classic'
+  },
+  {
+    id: 'hangman',
+    title: 'INFRASTRUCTURE HANGMAN',
+    subtitle: 'Save the Bridge',
+    description: 'Guess infrastructure words before the bridge collapses. 8 guesses. No hard hats required.',
+    path: '/games/hangman/',
+    tags: ['WORD', 'CASUAL'],
+    colors: { primary: '#00e5ff', secondary: '#ff2244', accent: '#00ff88' },
+    category: 'classic'
   }
 ];
 
 // ============================================================
 // Card Renderer
 // ============================================================
-function renderGameCards(containerId) {
+function renderGameCards(containerId, category) {
   var container = document.getElementById(containerId);
   if (!container) return;
 
-  ARCADE_GAMES.forEach(function(game) {
+  var games = category ? ARCADE_GAMES.filter(function(g) { return g.category === category; }) : ARCADE_GAMES;
+  games.forEach(function(game) {
     var card = document.createElement('a');
     card.href = game.path;
     card.className = 'game-card';
