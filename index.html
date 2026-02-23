@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CYVL ARCADE</title>
+<meta name="description" content="CYVL ARCADE — retro games for infrastructure nerds.">
+<meta property="og:title" content="CYVL ARCADE">
+<meta property="og:description" content="Retro games for infrastructure nerds. Play Infrastructure Wars and more.">
+<link rel="stylesheet" href="/shared/arcade.css">
+<style>
+  /* Background canvas */
+  #arcadeBg {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100vw; height: 100vh;
+    z-index: -1;
+  }
+
+  /* Content wrapper */
+  .arcade-content {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    padding: 60px 24px 40px;
+  }
+
+  /* Header */
+  .arcade-header {
+    text-align: center;
+    margin-bottom: 60px;
+  }
+  .arcade-title {
+    font-size: 4rem;
+    font-weight: bold;
+    color: var(--cyan);
+    letter-spacing: 12px;
+    text-shadow:
+      0 0 20px rgba(0,229,255,0.6),
+      0 0 40px rgba(0,229,255,0.3),
+      0 0 80px rgba(0,229,255,0.15);
+    animation: title-glow 3s ease-in-out infinite;
+  }
+  @keyframes title-glow {
+    0%, 100% { text-shadow: 0 0 20px rgba(0,229,255,0.6), 0 0 40px rgba(0,229,255,0.3), 0 0 80px rgba(0,229,255,0.15); }
+    50% { text-shadow: 0 0 30px rgba(0,229,255,0.8), 0 0 60px rgba(0,229,255,0.4), 0 0 100px rgba(0,229,255,0.2); }
+  }
+  .arcade-subtitle {
+    font-size: 1rem;
+    color: var(--green);
+    letter-spacing: 6px;
+    margin-top: 12px;
+    text-shadow: 0 0 10px rgba(0,255,136,0.4);
+  }
+
+  /* Game grid */
+  .game-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(360px, 420px));
+    gap: 32px;
+    justify-content: center;
+    width: 100%;
+    max-width: 1200px;
+  }
+
+  /* Game card */
+  .game-card {
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-light);
+    border: 2px solid var(--cyan-dark);
+    border-radius: 4px;
+    text-decoration: none;
+    color: var(--white);
+    transition: all 0.3s ease;
+    overflow: hidden;
+    box-shadow:
+      0 0 15px rgba(0,229,255,0.1),
+      inset 0 0 15px rgba(0,229,255,0.05);
+  }
+  .game-card:hover {
+    border-color: var(--cyan);
+    box-shadow:
+      0 0 30px rgba(0,229,255,0.3),
+      0 0 60px rgba(0,229,255,0.1),
+      inset 0 0 20px rgba(0,229,255,0.1);
+    transform: translateY(-4px);
+  }
+
+  /* Card screen (preview) */
+  .game-card-screen {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 380 / 200;
+    overflow: hidden;
+    border-bottom: 1px solid var(--cyan-dark);
+  }
+  .game-card-preview {
+    width: 100%;
+    height: 100%;
+    display: block;
+    image-rendering: pixelated;
+  }
+  .game-card-screen-overlay {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      rgba(0,0,0,0.08) 0px,
+      rgba(0,0,0,0.08) 1px,
+      transparent 1px,
+      transparent 2px
+    );
+    pointer-events: none;
+  }
+
+  /* Card info */
+  .game-card-info {
+    padding: 20px;
+    flex: 1;
+  }
+  .game-card-title {
+    font-size: 1.3rem;
+    color: var(--cyan);
+    letter-spacing: 2px;
+    margin-bottom: 2px;
+    text-shadow: 0 0 8px rgba(0,229,255,0.4);
+  }
+  .game-card-subtitle {
+    font-size: 0.8rem;
+    color: var(--cyan-dark);
+    letter-spacing: 1px;
+    margin-bottom: 12px;
+  }
+  .game-card-desc {
+    font-size: 0.8rem;
+    color: #8899aa;
+    line-height: 1.5;
+    margin-bottom: 14px;
+  }
+  .game-card-tags {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .game-tag {
+    font-size: 0.65rem;
+    padding: 3px 8px;
+    border: 1px solid var(--grid-bright);
+    color: var(--green);
+    letter-spacing: 1px;
+    border-radius: 2px;
+  }
+
+  /* Insert coin */
+  .game-card-coin {
+    text-align: center;
+    padding: 14px;
+    font-size: 0.9rem;
+    letter-spacing: 4px;
+    color: var(--cyan-dark);
+    border-top: 1px solid rgba(0,229,255,0.1);
+    transition: color 0.2s;
+  }
+  .game-card:hover .game-card-coin {
+    color: var(--yellow);
+    text-shadow: 0 0 10px rgba(255,238,0,0.5);
+    animation: coin-flash 0.8s infinite;
+  }
+  @keyframes coin-flash {
+    0%, 49% { opacity: 1; }
+    50%, 100% { opacity: 0.3; }
+  }
+
+  /* Footer */
+  .arcade-footer {
+    margin-top: 80px;
+    text-align: center;
+    color: var(--grid-bright);
+    font-size: 0.7rem;
+    letter-spacing: 2px;
+  }
+  .arcade-footer a {
+    color: var(--cyan-dark);
+    text-decoration: none;
+  }
+  .arcade-footer a:hover {
+    color: var(--cyan);
+  }
+
+  /* Responsive */
+  @media (max-width: 480px) {
+    .arcade-title { font-size: 2.2rem; letter-spacing: 6px; }
+    .arcade-subtitle { font-size: 0.75rem; letter-spacing: 3px; }
+    .arcade-content { padding: 32px 16px 24px; }
+    .arcade-header { margin-bottom: 36px; }
+    .game-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="crt-overlay"></div>
+<canvas id="arcadeBg"></canvas>
+
+<div class="arcade-content">
+  <header class="arcade-header">
+    <h1 class="arcade-title">CYVL ARCADE</h1>
+    <p class="arcade-subtitle">SELECT YOUR MISSION</p>
+  </header>
+
+  <main class="game-grid" id="gameGrid"></main>
+
+  <footer class="arcade-footer">
+    <p><a href="https://cyvl.ai">cyvl.ai</a> &mdash; making the physical world legible to AI</p>
+  </footer>
+</div>
+
+<script src="/shared/arcade.js"></script>
+<script>
+// ============================================================
+// Background Canvas Animation
+// ============================================================
+(function() {
+  var canvas = document.getElementById('arcadeBg');
+  var ctx = canvas.getContext('2d');
+  var particles = [];
+  var gridScrollY = 0;
+  var pulses = [];
+
+  function resize() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // Create particles
+  var isMobile = window.innerWidth < 768;
+  var particleCount = isMobile ? 25 : 60;
+  for (var i = 0; i < particleCount; i++) {
+    particles.push({
+      x: Math.random() * canvas.width,
+      y: Math.random() * canvas.height,
+      vx: (Math.random() - 0.5) * 0.3,
+      vy: -Math.random() * 0.4 - 0.1,
+      size: Math.random() * 2.5 + 0.5,
+      color: ['#00e5ff', '#00ff88', '#ff6600', '#4488ff', '#aa44ff'][Math.floor(Math.random() * 5)],
+      alpha: Math.random() * 0.5 + 0.1
+    });
+  }
+
+  function draw() {
+    var w = canvas.width, h = canvas.height;
+    ctx.fillStyle = '#0a0a1a';
+    ctx.fillRect(0, 0, w, h);
+
+    // Perspective grid
+    gridScrollY = (gridScrollY + 0.4) % 40;
+    var horizon = h * 0.3;
+    var cx = w / 2;
+
+    // Vertical converging lines
+    ctx.strokeStyle = 'rgba(13,42,58,0.4)';
+    ctx.lineWidth = 1;
+    var lineCount = 20;
+    for (var i = -lineCount; i <= lineCount; i++) {
+      var baseX = cx + i * (w / lineCount);
+      ctx.beginPath();
+      ctx.moveTo(baseX, h);
+      ctx.lineTo(cx + (baseX - cx) * 0.05, horizon);
+      ctx.stroke();
+    }
+
+    // Horizontal grid lines (scrolling toward viewer)
+    for (var y = 0; y < 15; y++) {
+      var t = (y + gridScrollY / 40) / 15;
+      var screenY = horizon + (h - horizon) * t * t;
+      var spread = (screenY - horizon) / (h - horizon);
+      var leftX = cx - w * 0.6 * spread;
+      var rightX = cx + w * 0.6 * spread;
+      ctx.globalAlpha = 0.15 + spread * 0.25;
+      ctx.strokeStyle = '#0d2a3a';
+      ctx.beginPath();
+      ctx.moveTo(leftX, screenY);
+      ctx.lineTo(rightX, screenY);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+
+    // Subtle horizontal ambient lines
+    ctx.strokeStyle = 'rgba(13,42,58,0.15)';
+    for (var y = 0; y < horizon; y += 60) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(w, y);
+      ctx.stroke();
+    }
+
+    // Particles
+    for (var i = 0; i < particles.length; i++) {
+      var p = particles[i];
+      p.x += p.vx;
+      p.y += p.vy;
+      if (p.y < -10) { p.y = h + 10; p.x = Math.random() * w; }
+      if (p.x < -10) p.x = w + 10;
+      if (p.x > w + 10) p.x = -10;
+      ctx.globalAlpha = p.alpha;
+      ctx.fillStyle = p.color;
+      ctx.fillRect(p.x, p.y, p.size, p.size);
+    }
+    ctx.globalAlpha = 1;
+
+    // Pulses
+    for (var i = pulses.length - 1; i >= 0; i--) {
+      var pulse = pulses[i];
+      pulse.r += 1.5;
+      pulse.alpha -= 0.005;
+      if (pulse.alpha <= 0) { pulses.splice(i, 1); continue; }
+      ctx.globalAlpha = pulse.alpha;
+      ctx.strokeStyle = '#00e5ff';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(pulse.x, pulse.y, pulse.r, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+
+    // Spawn occasional pulse
+    if (Math.random() < 0.003) {
+      pulses.push({
+        x: Math.random() * w,
+        y: horizon + Math.random() * (h - horizon),
+        r: 0,
+        alpha: 0.2
+      });
+    }
+
+    requestAnimationFrame(draw);
+  }
+  draw();
+})();
+
+// ============================================================
+// Initialize
+// ============================================================
+renderGameCards('gameGrid');
+bindCardEvents();
+
+// Init audio on first interaction
+document.addEventListener('click', function() {
+  initArcadeAudio();
+  playArcadeSound('boot');
+}, { once: true });
+</script>
+</body>
+</html>

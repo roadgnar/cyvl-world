@@ -1,0 +1,2380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>INFRASTRUCTURE WARS: The Cyvl Saga</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0a0a1a; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; font-family: 'Courier New', monospace; }
+canvas { display: block; image-rendering: pixelated; }
+</style>
+</head>
+<body>
+<script src="/shared/arcade-nav.js"></script>
+<canvas id="gameCanvas"></canvas>
+<script>
+// ============================================================
+// INFRASTRUCTURE WARS: The Cyvl Saga
+// ============================================================
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+canvas.width = 1280;
+canvas.height = 720;
+
+// ============================================================
+// CONSTANTS
+// ============================================================
+const COLORS = {
+  bg: '#0a0a1a',
+  grid: '#0d2a3a',
+  gridBright: '#1a4a5a',
+  cyan: '#00e5ff',
+  cyanDark: '#007a8a',
+  green: '#00ff88',
+  greenDark: '#008844',
+  orange: '#ff6600',
+  red: '#ff2244',
+  redDark: '#881122',
+  blue: '#4488ff',
+  white: '#ffffff',
+  yellow: '#ffee00',
+  purple: '#aa44ff',
+  pink: '#ff44aa',
+  gold: '#ffd700',
+  snow: '#aaccee',
+  snowTrail: 'rgba(170,200,230,0.3)',
+  scanned: 'rgba(0,229,255,0.08)',
+  scannedBright: 'rgba(0,229,255,0.15)',
+  shield: 'rgba(68,136,255,0.4)',
+};
+
+const TILE_SIZE = 64;
+const MAP_COLS = 40;
+const MAP_ROWS = 30;
+const MAP_W = MAP_COLS * TILE_SIZE;
+const MAP_H = MAP_ROWS * TILE_SIZE;
+const SCAN_GOAL = 0.80;
+
+// ============================================================
+// AUDIO SYSTEM (Web Audio API)
+// ============================================================
+let audioCtx = null;
+function initAudio() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+}
+
+function playSound(type) {
+  if (!audioCtx) return;
+  const now = audioCtx.currentTime;
+  const g = audioCtx.createGain();
+  g.connect(audioCtx.destination);
+  const o = audioCtx.createOscillator();
+  o.connect(g);
+
+  switch(type) {
+    case 'shoot':
+      o.type = 'square';
+      o.frequency.setValueAtTime(880, now);
+      o.frequency.exponentialRampToValueAtTime(220, now + 0.08);
+      g.gain.setValueAtTime(0.08, now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+      o.start(now); o.stop(now + 0.08);
+      break;
+    case 'explosion':
+      o.type = 'sawtooth';
+      o.frequency.setValueAtTime(150, now);
+      o.frequency.exponentialRampToValueAtTime(30, now + 0.4);
+      g.gain.setValueAtTime(0.15, now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+      o.start(now); o.stop(now + 0.4);
+      break;
+    case 'bomb':
+      o.type = 'sawtooth';
+      o.frequency.setValueAtTime(200, now);
+      o.frequency.exponentialRampToValueAtTime(15, now + 0.8);
+      g.gain.setValueAtTime(0.2, now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.8);
+      o.start(now); o.stop(now + 0.8);
+      break;
+    case 'honk':
+      o.type = 'square';
+      o.frequency.setValueAtTime(220, now);
+      o.frequency.setValueAtTime(180, now + 0.15);
+      g.gain.setValueAtTime(0.12, now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+      o.start(now); o.stop(now + 0.3);
+      break;
+    case 'pickup':
+      o.type = 'sine';
+      o.frequency.setValueAtTime(523, now);
+      o.frequency.setValueAtTime(659, now + 0.05);
+      o.frequency.setValueAtTime(784, now + 0.1);
+      g.gain.setValueAtTime(0.1, now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+      o.start(now); o.stop(now + 0.2);
+      break;
+    case 'hit':
+      o.type = 'square';
+      o.frequency.setValueAtTime(200, now);
+      o.frequency.exponentialRampToValueAtTime(80, now + 0.1);
+      g.gain.setValueAtTime(0.1, now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+      o.start(now); o.stop(now + 0.1);
+      break;
+    case 'boss':
+      o.type = 'sawtooth';
+      o.frequency.setValueAtTime(80, now);
+      o.frequency.setValueAtTime(60, now + 0.2);
+      o.frequency.setValueAtTime(80, now + 0.4);
+      g.gain.setValueAtTime(0.08, now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
+      o.start(now); o.stop(now + 0.6);
+      break;
+    case 'powerup':
+      o.type = 'sine';
+      o.frequency.setValueAtTime(400, now);
+      o.frequency.exponentialRampToValueAtTime(1200, now + 0.3);
+      g.gain.setValueAtTime(0.1, now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+      o.start(now); o.stop(now + 0.3);
+      break;
+    case 'scan':
+      o.type = 'sine';
+      o.frequency.setValueAtTime(1200, now);
+      o.frequency.exponentialRampToValueAtTime(1800, now + 0.05);
+      g.gain.setValueAtTime(0.03, now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
+      o.start(now); o.stop(now + 0.05);
+      break;
+  }
+}
+
+// ============================================================
+// UTILITY FUNCTIONS
+// ============================================================
+function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+function angle(a, b) { return Math.atan2(b.y - a.y, b.x - a.x); }
+function lerp(a, b, t) { return a + (b - a) * t; }
+function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+function rand(min, max) { return Math.random() * (max - min) + min; }
+function randInt(min, max) { return Math.floor(rand(min, max + 1)); }
+function randChoice(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+// ============================================================
+// INPUT HANDLING
+// ============================================================
+const keys = {};
+const mouse = { x: 0, y: 0, down: false };
+let konamiBuffer = [];
+const KONAMI = [38,38,40,40,37,39,37,39,66,65];
+let mcpMode = false;
+
+document.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (game.state === 'title') {
+    konamiBuffer.push(e.keyCode);
+    if (konamiBuffer.length > 10) konamiBuffer.shift();
+    if (konamiBuffer.length === 10 && konamiBuffer.every((v,i) => v === KONAMI[i])) {
+      mcpMode = true;
+      konamiBuffer = [];
+    }
+  }
+  if (e.code === 'Enter' || e.code === 'Space') {
+    if (game.state === 'title') { initAudio(); startGame(); }
+    else if (game.state === 'levelComplete' || game.state === 'partnership') advanceLevel();
+    else if (game.state === 'gameOver') { initAudio(); startGame(); }
+    else if (game.state === 'victory') { game.state = 'title'; }
+  }
+  if (e.code === 'Space' && game.state === 'playing') {
+    e.preventDefault();
+    fireBomb();
+  }
+});
+document.addEventListener('keyup', e => { keys[e.code] = false; });
+canvas.addEventListener('mousemove', e => {
+  const r = canvas.getBoundingClientRect();
+  mouse.x = (e.clientX - r.left) * (canvas.width / r.width);
+  mouse.y = (e.clientY - r.top) * (canvas.height / r.height);
+});
+canvas.addEventListener('mousedown', e => { mouse.down = true; initAudio(); });
+canvas.addEventListener('mouseup', e => { mouse.down = false; });
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+// ============================================================
+// PARTICLE SYSTEM
+// ============================================================
+const particles = [];
+
+function spawnParticles(x, y, color, count, speed, life, size) {
+  for (let i = 0; i < count; i++) {
+    const a = rand(0, Math.PI * 2);
+    const s = rand(speed * 0.3, speed);
+    particles.push({
+      x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s,
+      life: rand(life * 0.5, life), maxLife: life,
+      color, size: rand(size * 0.5, size),
+    });
+  }
+}
+
+function spawnRing(x, y, color, radius, count) {
+  for (let i = 0; i < count; i++) {
+    const a = (i / count) * Math.PI * 2;
+    particles.push({
+      x: x + Math.cos(a) * radius * 0.3,
+      y: y + Math.sin(a) * radius * 0.3,
+      vx: Math.cos(a) * radius * 2,
+      vy: Math.sin(a) * radius * 2,
+      life: 0.5, maxLife: 0.5,
+      color, size: 3,
+    });
+  }
+}
+
+function updateParticles(dt) {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.vx *= 0.97;
+    p.vy *= 0.97;
+    p.life -= dt;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+}
+
+function drawParticles() {
+  for (const p of particles) {
+    const alpha = clamp(p.life / p.maxLife, 0, 1);
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x - cam.x - p.size/2, p.y - cam.y - p.size/2, p.size, p.size);
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ============================================================
+// SCREEN SHAKE
+// ============================================================
+let shakeAmount = 0;
+let shakeTime = 0;
+function addShake(amount, time) { shakeAmount = Math.max(shakeAmount, amount); shakeTime = Math.max(shakeTime, time); }
+
+// ============================================================
+// CAMERA
+// ============================================================
+const cam = { x: 0, y: 0, targetX: 0, targetY: 0 };
+function updateCamera() {
+  cam.targetX = player.x - canvas.width / 2;
+  cam.targetY = player.y - canvas.height / 2;
+  cam.targetX = clamp(cam.targetX, 0, MAP_W - canvas.width);
+  cam.targetY = clamp(cam.targetY, 0, MAP_H - canvas.height);
+  cam.x = lerp(cam.x, cam.targetX, 0.1);
+  cam.y = lerp(cam.y, cam.targetY, 0.1);
+  if (shakeTime > 0) {
+    cam.x += rand(-shakeAmount, shakeAmount);
+    cam.y += rand(-shakeAmount, shakeAmount);
+  }
+}
+
+// ============================================================
+// MAP SYSTEM
+// ============================================================
+let tileMap = []; // 0=empty, 1=road, 2=building
+let scanMap = []; // false/true per road tile
+let totalRoadTiles = 0;
+let scannedRoadTiles = 0;
+
+function generateMap(level) {
+  tileMap = [];
+  scanMap = [];
+  totalRoadTiles = 0;
+  scannedRoadTiles = 0;
+
+  // Init all as buildings
+  for (let r = 0; r < MAP_ROWS; r++) {
+    tileMap[r] = [];
+    scanMap[r] = [];
+    for (let c = 0; c < MAP_COLS; c++) {
+      tileMap[r][c] = 2; // building
+      scanMap[r][c] = false;
+    }
+  }
+
+  // Generate road network based on level
+  const roadWidth = level === 0 ? 3 : level === 1 ? 2 : 2;
+  const gridSpacing = level === 0 ? 6 : level === 1 ? 5 : 4;
+
+  // Horizontal roads
+  for (let r = 2; r < MAP_ROWS - 2; r += gridSpacing) {
+    for (let w = 0; w < roadWidth && r + w < MAP_ROWS; w++) {
+      for (let c = 0; c < MAP_COLS; c++) {
+        tileMap[r + w][c] = 1;
+      }
+    }
+  }
+
+  // Vertical roads
+  for (let c = 2; c < MAP_COLS - 2; c += gridSpacing) {
+    for (let w = 0; w < roadWidth && c + w < MAP_COLS; w++) {
+      for (let r = 0; r < MAP_ROWS; r++) {
+        tileMap[r][c + w] = 1;
+      }
+    }
+  }
+
+  // Add some extra roads for Boston (winding) and NYC (dense)
+  if (level === 1) {
+    // Diagonal-ish roads for Boston
+    for (let i = 0; i < MAP_ROWS && i < MAP_COLS; i++) {
+      if (i < MAP_ROWS && i < MAP_COLS) tileMap[i][i] = 1;
+      if (i < MAP_ROWS && MAP_COLS - 1 - i >= 0) tileMap[i][MAP_COLS - 1 - i] = 1;
+    }
+  }
+  if (level === 2) {
+    // Extra dense grid for NYC
+    for (let r = 1; r < MAP_ROWS - 1; r += 3) {
+      for (let c = 0; c < MAP_COLS; c++) {
+        if (tileMap[r][c] === 2) tileMap[r][c] = 1;
+      }
+    }
+  }
+
+  // Count road tiles
+  for (let r = 0; r < MAP_ROWS; r++) {
+    for (let c = 0; c < MAP_COLS; c++) {
+      if (tileMap[r][c] === 1) totalRoadTiles++;
+    }
+  }
+}
+
+function scanTile(worldX, worldY, radius) {
+  const cr = Math.floor(worldY / TILE_SIZE);
+  const cc = Math.floor(worldX / TILE_SIZE);
+  const tr = Math.ceil(radius / TILE_SIZE);
+  let scanned = false;
+  for (let r = cr - tr; r <= cr + tr; r++) {
+    for (let c = cc - tr; c <= cc + tr; c++) {
+      if (r >= 0 && r < MAP_ROWS && c >= 0 && c < MAP_COLS) {
+        if (tileMap[r][c] === 1 && !scanMap[r][c]) {
+          const tx = c * TILE_SIZE + TILE_SIZE / 2;
+          const ty = r * TILE_SIZE + TILE_SIZE / 2;
+          if (Math.hypot(tx - worldX, ty - worldY) < radius + TILE_SIZE) {
+            scanMap[r][c] = true;
+            scannedRoadTiles++;
+            scanned = true;
+          }
+        }
+      }
+    }
+  }
+  return scanned;
+}
+
+function getScanPercent() { return totalRoadTiles > 0 ? scannedRoadTiles / totalRoadTiles : 0; }
+
+function isRoad(x, y) {
+  const r = Math.floor(y / TILE_SIZE);
+  const c = Math.floor(x / TILE_SIZE);
+  if (r < 0 || r >= MAP_ROWS || c < 0 || c >= MAP_COLS) return false;
+  return tileMap[r][c] === 1;
+}
+
+function drawMap() {
+  const startC = Math.max(0, Math.floor(cam.x / TILE_SIZE));
+  const endC = Math.min(MAP_COLS, Math.ceil((cam.x + canvas.width) / TILE_SIZE) + 1);
+  const startR = Math.max(0, Math.floor(cam.y / TILE_SIZE));
+  const endR = Math.min(MAP_ROWS, Math.ceil((cam.y + canvas.height) / TILE_SIZE) + 1);
+
+  for (let r = startR; r < endR; r++) {
+    for (let c = startC; c < endC; c++) {
+      const sx = c * TILE_SIZE - cam.x;
+      const sy = r * TILE_SIZE - cam.y;
+      const tile = tileMap[r][c];
+
+      if (tile === 1) {
+        // Road
+        if (scanMap[r][c]) {
+          ctx.fillStyle = COLORS.scannedBright;
+          ctx.fillRect(sx, sy, TILE_SIZE, TILE_SIZE);
+          ctx.strokeStyle = COLORS.cyanDark;
+          ctx.lineWidth = 0.5;
+          ctx.strokeRect(sx + 1, sy + 1, TILE_SIZE - 2, TILE_SIZE - 2);
+        } else {
+          ctx.fillStyle = '#0e0e1e';
+          ctx.fillRect(sx, sy, TILE_SIZE, TILE_SIZE);
+        }
+        // Road grid lines
+        ctx.strokeStyle = COLORS.grid;
+        ctx.lineWidth = 0.5;
+        ctx.strokeRect(sx, sy, TILE_SIZE, TILE_SIZE);
+      } else if (tile === 2) {
+        // Building
+        ctx.fillStyle = '#0a0a14';
+        ctx.fillRect(sx, sy, TILE_SIZE, TILE_SIZE);
+        ctx.strokeStyle = '#151530';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(sx + 4, sy + 4, TILE_SIZE - 8, TILE_SIZE - 8);
+        // Occasional window dots
+        if ((r * 7 + c * 13) % 5 === 0) {
+          ctx.fillStyle = '#1a1a3a';
+          ctx.fillRect(sx + 10, sy + 10, 4, 4);
+          ctx.fillRect(sx + 20, sy + 10, 4, 4);
+          ctx.fillRect(sx + 10, sy + 25, 4, 4);
+        }
+      }
+    }
+  }
+}
+
+// ============================================================
+// SNOW TRAILS
+// ============================================================
+const snowTrails = [];
+
+function addSnowTrail(x, y) {
+  snowTrails.push({ x, y, life: 5.0, size: 30 });
+}
+
+function updateSnowTrails(dt) {
+  for (let i = snowTrails.length - 1; i >= 0; i--) {
+    snowTrails[i].life -= dt;
+    if (snowTrails[i].life <= 0) snowTrails.splice(i, 1);
+  }
+}
+
+function drawSnowTrails() {
+  for (const s of snowTrails) {
+    const alpha = clamp(s.life / 5.0, 0, 0.3);
+    ctx.fillStyle = `rgba(170,200,230,${alpha})`;
+    ctx.fillRect(s.x - cam.x - s.size/2, s.y - cam.y - s.size/2, s.size, s.size);
+  }
+}
+
+function getSnowSlow(x, y) {
+  for (const s of snowTrails) {
+    if (Math.abs(s.x - x) < s.size && Math.abs(s.y - y) < s.size) return 0.6;
+  }
+  return 1.0;
+}
+
+// ============================================================
+// PLAYER
+// ============================================================
+const player = {
+  x: 0, y: 0, angle: 0, speed: 250, hp: 100, maxHp: 100,
+  bombs: 3, maxBombs: 5, shootCooldown: 0, shootRate: 0.12,
+  invincible: 0, score: 0, multiplier: 1, multiTimer: 0,
+  plowKills: 0, width: 40, height: 24,
+  // Power-up timers
+  autoTarget: 0, doubleDmg: 0, radar: 0, slowEnemies: 0, omniShot: 0,
+  salt: 0,
+};
+
+function resetPlayer() {
+  player.x = MAP_W / 2;
+  player.y = MAP_H / 2;
+  player.angle = 0;
+  player.hp = player.maxHp;
+  player.bombs = 3;
+  player.shootCooldown = 0;
+  player.invincible = 0;
+  player.multiplier = 1;
+  player.multiTimer = 0;
+  player.autoTarget = 0;
+  player.doubleDmg = 0;
+  player.radar = 0;
+  player.slowEnemies = 0;
+  player.omniShot = 0;
+  player.salt = 0;
+}
+
+function updatePlayer(dt) {
+  let dx = 0, dy = 0;
+  if (keys['KeyW'] || keys['ArrowUp']) dy -= 1;
+  if (keys['KeyS'] || keys['ArrowDown']) dy += 1;
+  if (keys['KeyA'] || keys['ArrowLeft']) dx -= 1;
+  if (keys['KeyD'] || keys['ArrowRight']) dx += 1;
+
+  if (dx !== 0 || dy !== 0) {
+    const len = Math.hypot(dx, dy);
+    dx /= len; dy /= len;
+  }
+
+  const slow = getSnowSlow(player.x, player.y);
+  const spd = player.speed * slow * dt;
+  player.x += dx * spd;
+  player.y += dy * spd;
+  player.x = clamp(player.x, 20, MAP_W - 20);
+  player.y = clamp(player.y, 20, MAP_H - 20);
+
+  // Mouse aim
+  const mx = mouse.x + cam.x;
+  const my = mouse.y + cam.y;
+  player.angle = Math.atan2(my - player.y, mx - player.x);
+
+  // Shooting
+  player.shootCooldown -= dt;
+  const rate = mcpMode ? player.shootRate / 2 : player.shootRate;
+  if (mouse.down && player.shootCooldown <= 0) {
+    player.shootCooldown = rate;
+    fireProjectile();
+  }
+
+  // Power-up timers
+  player.autoTarget = Math.max(0, player.autoTarget - dt);
+  player.doubleDmg = Math.max(0, player.doubleDmg - dt);
+  player.radar = Math.max(0, player.radar - dt);
+  player.slowEnemies = Math.max(0, player.slowEnemies - dt);
+  player.omniShot = Math.max(0, player.omniShot - dt);
+  player.salt = Math.max(0, player.salt - dt);
+  player.invincible = Math.max(0, player.invincible - dt);
+
+  // Multiplier decay
+  player.multiTimer -= dt;
+  if (player.multiTimer <= 0) {
+    player.multiplier = Math.max(1, player.multiplier - 1);
+    player.multiTimer = 3;
+  }
+
+  // Scan ground beneath player
+  if (scanTile(player.x, player.y, 40)) {
+    if (Math.random() < 0.1) playSound('scan');
+  }
+}
+
+function drawPlayer() {
+  const sx = player.x - cam.x;
+  const sy = player.y - cam.y;
+
+  ctx.save();
+  ctx.translate(sx, sy);
+  ctx.rotate(player.angle);
+
+  // Truck body
+  ctx.strokeStyle = player.invincible > 0 || player.salt > 0 ? COLORS.yellow : COLORS.green;
+  ctx.lineWidth = 2;
+  ctx.fillStyle = 'rgba(0,255,136,0.1)';
+  ctx.beginPath();
+  ctx.rect(-20, -12, 40, 24);
+  ctx.fill();
+  ctx.stroke();
+
+  // Front bumper
+  ctx.strokeStyle = COLORS.cyan;
+  ctx.beginPath();
+  ctx.moveTo(20, -14);
+  ctx.lineTo(26, -10);
+  ctx.lineTo(26, 10);
+  ctx.lineTo(20, 14);
+  ctx.stroke();
+
+  // Wheels
+  ctx.fillStyle = COLORS.greenDark;
+  ctx.fillRect(-16, -16, 10, 4);
+  ctx.fillRect(-16, 12, 10, 4);
+  ctx.fillRect(6, -16, 10, 4);
+  ctx.fillRect(6, 12, 10, 4);
+
+  // LiDAR dome (spinning)
+  const spin = performance.now() / 200;
+  ctx.strokeStyle = COLORS.cyan;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(0, 0, 8, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(Math.cos(spin) * 10, Math.sin(spin) * 10);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(Math.cos(spin + Math.PI) * 10, Math.sin(spin + Math.PI) * 10);
+  ctx.stroke();
+
+  // Glow
+  ctx.fillStyle = 'rgba(0,229,255,0.15)';
+  ctx.beginPath();
+  ctx.arc(0, 0, 20, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+
+  // Power-up indicators
+  if (player.salt > 0) {
+    ctx.strokeStyle = COLORS.yellow;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(sx, sy, 30, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+}
+
+// ============================================================
+// PROJECTILES
+// ============================================================
+const projectiles = [];
+const enemyProjectiles = [];
+
+function fireProjectile() {
+  playSound('shoot');
+  const dmg = player.doubleDmg > 0 ? 20 : 10;
+
+  if (player.omniShot > 0) {
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      projectiles.push({
+        x: player.x, y: player.y, vx: Math.cos(a) * 600, vy: Math.sin(a) * 600,
+        life: 1.2, damage: dmg, size: 4, color: COLORS.cyan,
+      });
+    }
+  } else if (player.autoTarget > 0 && enemies.length > 0) {
+    let nearest = enemies[0], nd = Infinity;
+    for (const e of enemies) { const d = dist(player, e); if (d < nd) { nd = d; nearest = e; } }
+    const a = angle(player, nearest);
+    projectiles.push({
+      x: player.x, y: player.y, vx: Math.cos(a) * 600, vy: Math.sin(a) * 600,
+      life: 1.2, damage: dmg, size: 4, color: COLORS.yellow,
+    });
+  } else {
+    projectiles.push({
+      x: player.x, y: player.y,
+      vx: Math.cos(player.angle) * 600, vy: Math.sin(player.angle) * 600,
+      life: 1.2, damage: dmg, size: 4, color: COLORS.cyan,
+    });
+  }
+
+  spawnParticles(player.x + Math.cos(player.angle) * 26, player.y + Math.sin(player.angle) * 26,
+    COLORS.cyan, 3, 100, 0.2, 2);
+}
+
+function fireBomb() {
+  if (player.bombs <= 0) return;
+  player.bombs--;
+  playSound('bomb');
+  addShake(15, 0.5);
+
+  // Scan huge radius
+  scanTile(player.x, player.y, 250);
+
+  // Damage all enemies in range
+  for (const e of enemies) {
+    if (dist(player, e) < 300) {
+      e.hp -= 50;
+      spawnParticles(e.x, e.y, COLORS.white, 10, 200, 0.5, 3);
+    }
+  }
+  if (boss && dist(player, boss) < 300) {
+    boss.hp -= 30;
+  }
+
+  // Visual ring
+  spawnRing(player.x, player.y, COLORS.white, 300, 40);
+  spawnParticles(player.x, player.y, COLORS.blue, 30, 300, 0.6, 4);
+  spawnParticles(player.x, player.y, COLORS.white, 20, 200, 0.4, 3);
+
+  // Bomb ring effect
+  bombRings.push({ x: player.x, y: player.y, radius: 0, maxRadius: 300, life: 0.5 });
+}
+
+const bombRings = [];
+
+function updateBombRings(dt) {
+  for (let i = bombRings.length - 1; i >= 0; i--) {
+    const b = bombRings[i];
+    b.radius += (b.maxRadius / 0.3) * dt;
+    b.life -= dt;
+    if (b.life <= 0) bombRings.splice(i, 1);
+  }
+}
+
+function drawBombRings() {
+  for (const b of bombRings) {
+    const alpha = clamp(b.life / 0.5, 0, 1);
+    ctx.strokeStyle = `rgba(200,220,255,${alpha})`;
+    ctx.lineWidth = 4 * alpha;
+    ctx.beginPath();
+    ctx.arc(b.x - cam.x, b.y - cam.y, b.radius, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+}
+
+function updateProjectiles(dt) {
+  for (let i = projectiles.length - 1; i >= 0; i--) {
+    const p = projectiles[i];
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.life -= dt;
+
+    // Scan tiles as bullets fly
+    scanTile(p.x, p.y, 20);
+
+    if (p.life <= 0 || p.x < 0 || p.x > MAP_W || p.y < 0 || p.y > MAP_H) {
+      projectiles.splice(i, 1);
+      continue;
+    }
+
+    // Hit enemies
+    let hit = false;
+    for (const e of enemies) {
+      if (dist(p, e) < e.size + p.size) {
+        e.hp -= p.damage;
+        spawnParticles(p.x, p.y, COLORS.cyan, 5, 80, 0.2, 2);
+        playSound('hit');
+        hit = true;
+        break;
+      }
+    }
+    // Hit boss
+    if (!hit && boss && dist(p, boss) < boss.size + p.size) {
+      if (boss.shield && boss.shield > 0) {
+        boss.shield -= p.damage;
+        spawnParticles(p.x, p.y, COLORS.blue, 5, 80, 0.2, 2);
+      } else {
+        boss.hp -= p.damage;
+        spawnParticles(p.x, p.y, COLORS.cyan, 5, 80, 0.2, 2);
+      }
+      playSound('hit');
+      hit = true;
+    }
+    if (hit) projectiles.splice(i, 1);
+  }
+
+  // Enemy projectiles
+  for (let i = enemyProjectiles.length - 1; i >= 0; i--) {
+    const p = enemyProjectiles[i];
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    if (p.tracking) {
+      const a = angle(p, player);
+      p.vx = lerp(p.vx, Math.cos(a) * p.speed, 0.02);
+      p.vy = lerp(p.vy, Math.sin(a) * p.speed, 0.02);
+    }
+    p.life -= dt;
+    if (p.life <= 0 || p.x < 0 || p.x > MAP_W || p.y < 0 || p.y > MAP_H) {
+      enemyProjectiles.splice(i, 1);
+      continue;
+    }
+    if (dist(p, player) < 20 && player.invincible <= 0 && player.salt <= 0) {
+      player.hp -= p.damage;
+      player.invincible = 0.3;
+      player.multiplier = 1;
+      spawnParticles(player.x, player.y, COLORS.red, 8, 100, 0.3, 3);
+      addShake(5, 0.15);
+      enemyProjectiles.splice(i, 1);
+    }
+  }
+}
+
+function drawProjectiles() {
+  for (const p of projectiles) {
+    ctx.fillStyle = p.color;
+    ctx.shadowColor = p.color;
+    ctx.shadowBlur = 8;
+    ctx.fillRect(p.x - cam.x - p.size/2, p.y - cam.y - p.size/2, p.size, p.size);
+  }
+  ctx.shadowBlur = 0;
+
+  for (const p of enemyProjectiles) {
+    ctx.fillStyle = p.color || COLORS.red;
+    ctx.shadowColor = p.color || COLORS.red;
+    ctx.shadowBlur = 6;
+    const s = p.size || 4;
+    ctx.fillRect(p.x - cam.x - s/2, p.y - cam.y - s/2, s, s);
+  }
+  ctx.shadowBlur = 0;
+}
+
+// ============================================================
+// ENEMIES
+// ============================================================
+const enemies = [];
+
+function spawnEnemy(type, x, y, variant) {
+  const e = {
+    type, x, y, hp: 30, maxHp: 30, size: 16, speed: 80,
+    shootTimer: 0, shootRate: 2, angle: 0, variant: variant || 'standard',
+    timer: 0, phase: 0, label: '',
+    snowTimer: 0, flashTimer: 0, warned: false,
+  };
+
+  switch(type) {
+    case 'snowplow':
+      e.hp = variant === 'armored' ? 150 : 60;
+      e.maxHp = e.hp;
+      e.size = variant === 'boss_plow' ? 40 : 28;
+      e.speed = variant === 'tracking' ? 250 : 350;
+      e.label = variant === 'armored' ? 'ARMORED PLOW' : 'SNOW PLOW';
+      break;
+    case 'pothole':
+      e.hp = 50; e.maxHp = 50; e.size = 24; e.speed = 0;
+      e.shootTimer = 2; e.label = 'POTHOLE SPAWNER';
+      break;
+    case 'drone':
+      e.hp = 15; e.maxHp = 15; e.size = 12; e.speed = 100;
+      e.shootRate = 3; e.shootTimer = rand(1, 3);
+      e.label = randChoice(['MANUAL_SURVEY', 'CLIPBOARD.exe', 'SPREADSHEET_v1997']);
+      break;
+    case 'turret':
+      e.hp = 80; e.maxHp = 80; e.size = 20; e.speed = 0;
+      e.shield = 40; e.maxShield = 40;
+      e.shootRate = 1.5; e.shootTimer = 1;
+      e.label = randChoice(['PROPRIETARY FORMAT', 'VENDOR LOCK-IN']);
+      break;
+    case 'blob':
+      e.hp = 120; e.maxHp = 120; e.size = 30; e.speed = 40;
+      e.label = randChoice(['PERMITTING_DEPT', 'RFP_PROCESS']);
+      e.absorbed = 0;
+      break;
+  }
+  enemies.push(e);
+  return e;
+}
+
+function updateEnemies(dt) {
+  const slowFactor = player.slowEnemies > 0 ? 0.4 : 1.0;
+
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    const e = enemies[i];
+    e.timer += dt;
+
+    switch(e.type) {
+      case 'snowplow': {
+        // Move forward in direction
+        if (!e.warned) {
+          e.warned = true;
+          e.flashTimer = 1.0;
+          playSound('honk');
+        }
+        e.flashTimer -= dt;
+
+        if (e.variant === 'tracking') {
+          const a = angle(e, player);
+          e.angle = lerp(e.angle, a, 0.03);
+        }
+        e.x += Math.cos(e.angle) * e.speed * slowFactor * dt;
+        e.y += Math.sin(e.angle) * e.speed * slowFactor * dt;
+
+        // Snow trail
+        e.snowTimer += dt;
+        if (e.snowTimer > 0.1) {
+          e.snowTimer = 0;
+          addSnowTrail(e.x, e.y);
+        }
+
+        // Hit player
+        if (dist(e, player) < e.size + 18 && player.invincible <= 0 && player.salt <= 0) {
+          player.hp -= 30;
+          player.invincible = 1.0;
+          player.multiplier = 1;
+          addShake(12, 0.3);
+          spawnParticles(player.x, player.y, COLORS.red, 15, 150, 0.4, 3);
+          playSound('explosion');
+        }
+
+        // Off map = remove
+        if (e.x < -100 || e.x > MAP_W + 100 || e.y < -100 || e.y > MAP_H + 100) {
+          enemies.splice(i, 1); continue;
+        }
+        break;
+      }
+
+      case 'pothole': {
+        e.shootTimer -= dt;
+        if (e.shootTimer <= 0) {
+          e.shootTimer = 2.5;
+          // Spawn pothole hazard
+          potholes.push({ x: e.x + rand(-60, 60), y: e.y + rand(-60, 60), size: 5, maxSize: 25, life: 6, growing: true });
+        }
+        break;
+      }
+
+      case 'drone': {
+        // Fly in patterns
+        const orbit = e.timer * 1.5;
+        e.x += Math.cos(orbit) * e.speed * slowFactor * dt;
+        e.y += Math.sin(orbit * 0.7) * e.speed * slowFactor * dt * 0.5;
+
+        e.shootTimer -= dt;
+        if (e.shootTimer <= 0 && dist(e, player) < 500) {
+          e.shootTimer = e.shootRate;
+          const a = angle(e, player);
+          enemyProjectiles.push({
+            x: e.x, y: e.y, vx: Math.cos(a) * 180, vy: Math.sin(a) * 180,
+            life: 3, damage: 8, speed: 180, size: 4, color: COLORS.red,
+          });
+        }
+        break;
+      }
+
+      case 'turret': {
+        e.shootTimer -= dt;
+        if (e.shootTimer <= 0 && dist(e, player) < 450) {
+          e.shootTimer = e.shootRate;
+          const a = angle(e, player);
+          enemyProjectiles.push({
+            x: e.x, y: e.y, vx: Math.cos(a) * 200, vy: Math.sin(a) * 200,
+            life: 3, damage: 10, speed: 200, tracking: true, size: 5, color: COLORS.orange,
+          });
+        }
+        // Regen shield slowly
+        if (e.shield < e.maxShield) e.shield += 3 * dt;
+        break;
+      }
+
+      case 'blob': {
+        // Move toward player slowly
+        const a = angle(e, player);
+        e.x += Math.cos(a) * e.speed * slowFactor * dt;
+        e.y += Math.sin(a) * e.speed * slowFactor * dt;
+
+        // Size increases as it takes damage
+        e.size = 30 + (1 - e.hp / e.maxHp) * 20;
+
+        // Hit player
+        if (dist(e, player) < e.size + 15 && player.invincible <= 0 && player.salt <= 0) {
+          player.hp -= 15;
+          player.invincible = 0.5;
+          addShake(5, 0.15);
+        }
+        break;
+      }
+    }
+
+    // Death check
+    if (e.hp <= 0) {
+      onEnemyDeath(e);
+      enemies.splice(i, 1);
+    }
+  }
+}
+
+function onEnemyDeath(e) {
+  playSound('explosion');
+  spawnParticles(e.x, e.y, COLORS.orange, 15, 150, 0.4, 3);
+  spawnParticles(e.x, e.y, COLORS.yellow, 10, 100, 0.3, 2);
+
+  // Score
+  let points = 100;
+  if (e.type === 'snowplow') { points = 500; player.plowKills++; }
+  if (e.type === 'blob') points = 300;
+  if (e.type === 'turret') points = 250;
+  player.score += points * player.multiplier;
+  player.multiplier = Math.min(player.multiplier + 1, 10);
+  player.multiTimer = 3;
+
+  // Blob splits
+  if (e.type === 'blob' && e.size > 20) {
+    for (let j = 0; j < 2; j++) {
+      const b = spawnEnemy('blob', e.x + rand(-20, 20), e.y + rand(-20, 20));
+      b.hp = 30; b.maxHp = 30; b.size = 18;
+    }
+  }
+
+  // Pothole repair visual
+  if (e.type === 'pothole') {
+    scanTile(e.x, e.y, 100);
+  }
+
+  // Turret text
+  if (e.type === 'turret') {
+    floatingTexts.push({ x: e.x, y: e.y, text: "should've used open standards", life: 2, color: COLORS.cyan });
+  }
+
+  // Drop pickups
+  const r = Math.random();
+  if (r < 0.25) {
+    pickups.push({ x: e.x, y: e.y, type: 'health', life: 10 });
+  } else if (r < 0.35) {
+    pickups.push({ x: e.x, y: e.y, type: 'bomb', life: 10 });
+  } else if (r < 0.55) {
+    pickups.push({ x: e.x, y: e.y, type: 'points', life: 10 });
+  } else if (r < 0.62) {
+    const dTypes = ['D1', 'D2', 'D3', 'D4', 'D5'];
+    pickups.push({ x: e.x, y: e.y, type: randChoice(dTypes), life: 12 });
+  }
+
+  // Snow plow SALT drop
+  if (e.type === 'snowplow' && Math.random() < 0.15) {
+    pickups.push({ x: e.x, y: e.y, type: 'SALT', life: 10 });
+  }
+}
+
+function drawEnemies() {
+  for (const e of enemies) {
+    const sx = e.x - cam.x;
+    const sy = e.y - cam.y;
+    if (sx < -100 || sx > canvas.width + 100 || sy < -100 || sy > canvas.height + 100) continue;
+
+    ctx.save();
+    ctx.translate(sx, sy);
+
+    switch(e.type) {
+      case 'snowplow':
+        ctx.rotate(e.angle);
+        // Flash before charge
+        if (e.flashTimer > 0 && Math.floor(e.flashTimer * 10) % 2) {
+          ctx.fillStyle = COLORS.orange;
+          ctx.fillRect(-e.size - 5, -e.size - 5, e.size * 2 + 10, e.size * 2 + 10);
+        }
+        // Plow body
+        ctx.strokeStyle = e.variant === 'armored' ? COLORS.yellow : COLORS.orange;
+        ctx.lineWidth = 2;
+        ctx.fillStyle = e.variant === 'armored' ? 'rgba(255,238,0,0.15)' : 'rgba(255,102,0,0.15)';
+        ctx.beginPath();
+        ctx.rect(-e.size, -e.size * 0.7, e.size * 2, e.size * 1.4);
+        ctx.fill(); ctx.stroke();
+        // Plow blade
+        ctx.strokeStyle = COLORS.white;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(e.size, -e.size);
+        ctx.lineTo(e.size + 8, -e.size * 0.5);
+        ctx.lineTo(e.size + 8, e.size * 0.5);
+        ctx.lineTo(e.size, e.size);
+        ctx.stroke();
+        // HP bar
+        ctx.fillStyle = COLORS.red;
+        ctx.fillRect(-e.size, -e.size - 8, e.size * 2 * (e.hp / e.maxHp), 4);
+        break;
+
+      case 'pothole':
+        ctx.strokeStyle = COLORS.red;
+        ctx.lineWidth = 2;
+        ctx.fillStyle = 'rgba(255,34,68,0.1)';
+        // Cracked circle
+        ctx.beginPath();
+        ctx.arc(0, 0, e.size, 0, Math.PI * 2);
+        ctx.fill(); ctx.stroke();
+        // Cracks
+        for (let j = 0; j < 5; j++) {
+          const a = (j / 5) * Math.PI * 2;
+          ctx.beginPath();
+          ctx.moveTo(0, 0);
+          ctx.lineTo(Math.cos(a) * e.size * 0.8, Math.sin(a) * e.size * 0.8);
+          ctx.stroke();
+        }
+        break;
+
+      case 'drone':
+        ctx.strokeStyle = COLORS.red;
+        ctx.lineWidth = 1.5;
+        ctx.fillStyle = 'rgba(255,34,68,0.1)';
+        // Diamond shape
+        ctx.beginPath();
+        ctx.moveTo(0, -e.size);
+        ctx.lineTo(e.size, 0);
+        ctx.lineTo(0, e.size);
+        ctx.lineTo(-e.size, 0);
+        ctx.closePath();
+        ctx.fill(); ctx.stroke();
+        // Label
+        ctx.fillStyle = COLORS.red;
+        ctx.font = '7px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(e.label, 0, e.size + 12);
+        break;
+
+      case 'turret':
+        // Shield
+        if (e.shield > 0) {
+          ctx.strokeStyle = COLORS.shield;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(0, 0, e.size + 8, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.strokeStyle = COLORS.orange;
+        ctx.lineWidth = 2;
+        ctx.fillStyle = 'rgba(255,102,0,0.1)';
+        ctx.beginPath();
+        ctx.rect(-e.size, -e.size, e.size * 2, e.size * 2);
+        ctx.fill(); ctx.stroke();
+        // Turret barrel
+        const ta = angle(e, player);
+        ctx.strokeStyle = COLORS.red;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(Math.cos(ta - e.x * 0 + 0) * e.size * 1.5, Math.sin(ta) * e.size * 1.5);
+        ctx.stroke();
+        // Label
+        ctx.fillStyle = COLORS.orange;
+        ctx.font = '7px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(e.label, 0, e.size + 14);
+        break;
+
+      case 'blob':
+        ctx.fillStyle = `rgba(170,68,255,${0.2 + Math.sin(e.timer * 3) * 0.1})`;
+        ctx.strokeStyle = COLORS.purple;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        // Blobby circle
+        for (let j = 0; j < 12; j++) {
+          const a = (j / 12) * Math.PI * 2;
+          const r = e.size + Math.sin(e.timer * 2 + j) * 5;
+          if (j === 0) ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r);
+          else ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+        }
+        ctx.closePath();
+        ctx.fill(); ctx.stroke();
+        // Label
+        ctx.fillStyle = COLORS.purple;
+        ctx.font = '7px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(e.label, 0, e.size + 14);
+        break;
+    }
+
+    ctx.restore();
+  }
+}
+
+// ============================================================
+// POTHOLES (hazards spawned by pothole spawners)
+// ============================================================
+const potholes = [];
+
+function updatePotholes(dt) {
+  for (let i = potholes.length - 1; i >= 0; i--) {
+    const p = potholes[i];
+    if (p.growing && p.size < p.maxSize) p.size += 15 * dt;
+    p.life -= dt;
+    if (p.life <= 0) { potholes.splice(i, 1); continue; }
+
+    // Damage player
+    if (dist(p, player) < p.size + 10 && player.invincible <= 0 && player.salt <= 0) {
+      player.hp -= 10 * dt;
+      if (Math.random() < 0.1) addShake(3, 0.1);
+    }
+  }
+}
+
+function drawPotholes() {
+  for (const p of potholes) {
+    const sx = p.x - cam.x, sy = p.y - cam.y;
+    const alpha = clamp(p.life / 2, 0, 0.6);
+    ctx.fillStyle = `rgba(40,0,0,${alpha})`;
+    ctx.strokeStyle = `rgba(255,34,68,${alpha})`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(sx, sy, p.size, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+  }
+}
+
+// ============================================================
+// PICKUPS
+// ============================================================
+const pickups = [];
+
+function updatePickups(dt) {
+  for (let i = pickups.length - 1; i >= 0; i--) {
+    const p = pickups[i];
+    p.life -= dt;
+    if (p.life <= 0) { pickups.splice(i, 1); continue; }
+
+    if (dist(p, player) < 30) {
+      collectPickup(p);
+      pickups.splice(i, 1);
+    }
+  }
+}
+
+function collectPickup(p) {
+  playSound('pickup');
+  spawnParticles(p.x, p.y, COLORS.white, 8, 80, 0.3, 2);
+
+  switch(p.type) {
+    case 'health':
+      player.hp = Math.min(player.maxHp, player.hp + 25);
+      floatingTexts.push({ x: p.x, y: p.y, text: '+25 HP', life: 1.5, color: COLORS.green });
+      break;
+    case 'bomb':
+      player.bombs = Math.min(player.maxBombs, player.bombs + 1);
+      floatingTexts.push({ x: p.x, y: p.y, text: '+1 BOMB', life: 1.5, color: COLORS.blue });
+      break;
+    case 'points':
+      player.score += 200 * player.multiplier;
+      floatingTexts.push({ x: p.x, y: p.y, text: '+' + (200 * player.multiplier), life: 1.5, color: COLORS.gold });
+      break;
+    case 'D1':
+      player.autoTarget = 10;
+      floatingTexts.push({ x: p.x, y: p.y, text: 'D1: AUTO-TARGET', life: 2, color: COLORS.purple });
+      playSound('powerup');
+      break;
+    case 'D2':
+      player.doubleDmg = 10;
+      floatingTexts.push({ x: p.x, y: p.y, text: 'D2: DOUBLE DMG', life: 2, color: COLORS.purple });
+      playSound('powerup');
+      break;
+    case 'D3':
+      player.radar = 10;
+      floatingTexts.push({ x: p.x, y: p.y, text: 'D3: RADAR PULSE', life: 2, color: COLORS.purple });
+      playSound('powerup');
+      spawnRing(player.x, player.y, COLORS.purple, 500, 30);
+      break;
+    case 'D4':
+      player.slowEnemies = 8;
+      floatingTexts.push({ x: p.x, y: p.y, text: 'D4: SLOW ENEMIES', life: 2, color: COLORS.purple });
+      playSound('powerup');
+      break;
+    case 'D5':
+      player.omniShot = 5;
+      floatingTexts.push({ x: p.x, y: p.y, text: 'D5: OMNI-FIRE!', life: 2, color: COLORS.purple });
+      playSound('powerup');
+      break;
+    case 'SALT':
+      player.salt = 8;
+      floatingTexts.push({ x: p.x, y: p.y, text: 'SALT! INVINCIBLE!', life: 2, color: COLORS.yellow });
+      playSound('powerup');
+      break;
+  }
+}
+
+function drawPickups() {
+  const t = performance.now() / 1000;
+  for (const p of pickups) {
+    const sx = p.x - cam.x, sy = p.y - cam.y;
+    const bob = Math.sin(t * 3 + p.x) * 4;
+
+    ctx.save();
+    ctx.translate(sx, sy + bob);
+
+    const flash = p.life < 2 && Math.floor(p.life * 5) % 2;
+    if (flash) { ctx.restore(); continue; }
+
+    switch(p.type) {
+      case 'health':
+        ctx.fillStyle = COLORS.green;
+        ctx.beginPath(); ctx.arc(0, 0, 8, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = COLORS.bg;
+        ctx.fillRect(-4, -1.5, 8, 3);
+        ctx.fillRect(-1.5, -4, 3, 8);
+        break;
+      case 'bomb':
+        ctx.fillStyle = COLORS.blue;
+        ctx.beginPath();
+        ctx.moveTo(0, -10); ctx.lineTo(8, 0); ctx.lineTo(0, 10); ctx.lineTo(-8, 0);
+        ctx.closePath(); ctx.fill();
+        break;
+      case 'points':
+        ctx.fillStyle = COLORS.gold;
+        ctx.fillRect(-6, -6, 12, 12);
+        ctx.strokeStyle = COLORS.bg; ctx.lineWidth = 1;
+        ctx.strokeRect(-6, -6, 12, 12);
+        break;
+      case 'SALT':
+        ctx.fillStyle = COLORS.yellow;
+        ctx.beginPath(); ctx.arc(0, 0, 10, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = COLORS.bg;
+        ctx.font = '8px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText('S', 0, 0);
+        break;
+      default: // D-level pickups
+        ctx.fillStyle = COLORS.purple;
+        ctx.beginPath(); ctx.arc(0, 0, 10, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = COLORS.white;
+        ctx.font = '8px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(p.type, 0, 1);
+        break;
+    }
+    ctx.restore();
+  }
+}
+
+// ============================================================
+// FLOATING TEXTS
+// ============================================================
+const floatingTexts = [];
+
+function updateFloatingTexts(dt) {
+  for (let i = floatingTexts.length - 1; i >= 0; i--) {
+    const t = floatingTexts[i];
+    t.y -= 30 * dt;
+    t.life -= dt;
+    if (t.life <= 0) floatingTexts.splice(i, 1);
+  }
+}
+
+function drawFloatingTexts() {
+  for (const t of floatingTexts) {
+    const alpha = clamp(t.life, 0, 1);
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = t.color;
+    ctx.font = '12px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(t.text, t.x - cam.x, t.y - cam.y);
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ============================================================
+// BOSS SYSTEM
+// ============================================================
+let boss = null;
+let bossActive = false;
+
+function spawnBoss(level) {
+  bossActive = true;
+  playSound('boss');
+  floatingTexts.push({ x: player.x, y: player.y - 50, text: 'WARNING: BOSS INCOMING', life: 3, color: COLORS.red });
+
+  switch(level) {
+    case 0: // Esri Monolith
+      boss = {
+        type: 'esri', x: player.x, y: player.y - 300,
+        hp: 600, maxHp: 600, shield: 0, size: 50,
+        phase: 0, timer: 0, attackTimer: 0, rotation: 0,
+        label: 'THE ESRI MONOLITH',
+        defeatText: 'ESRI PARTNERSHIP SECURED — Living Atlas integration unlocked!',
+      };
+      break;
+    case 1: // Trimble Titan
+      boss = {
+        type: 'trimble', x: player.x + 300, y: player.y,
+        hp: 800, maxHp: 800, shield: 0, size: 45,
+        phase: 0, timer: 0, attackTimer: 0, rotation: 0,
+        label: 'THE TRIMBLE TITAN',
+        defeatText: 'TRIMBLE/CITYWORKS ACTIVATED — 700 municipal customers connected!',
+      };
+      break;
+    case 2: // Infrastructure Singularity
+      boss = {
+        type: 'singularity', x: MAP_W / 2, y: MAP_H / 2 - 200,
+        hp: 1200, maxHp: 1200, shield: 0, size: 80,
+        phase: 0, timer: 0, attackTimer: 0, rotation: 0,
+        label: 'THE INFRASTRUCTURE SINGULARITY',
+        defeatText: 'ALL 600+ CITIES SCANNED. INFRASTRUCTURE MADE LEGIBLE TO AI. THE PHYSICAL WORLD IS NOW QUERYABLE.',
+      };
+      break;
+  }
+}
+
+function updateBoss(dt) {
+  if (!boss) return;
+  boss.timer += dt;
+  boss.rotation += dt * 0.5;
+  boss.attackTimer -= dt;
+
+  const hpRatio = boss.hp / boss.maxHp;
+
+  switch(boss.type) {
+    case 'esri': {
+      // Float toward player slowly
+      const a = angle(boss, player);
+      boss.x += Math.cos(a) * 40 * dt;
+      boss.y += Math.sin(a) * 40 * dt;
+
+      // Phase based on HP
+      if (hpRatio < 0.5) boss.phase = 1;
+
+      if (boss.attackTimer <= 0) {
+        boss.attackTimer = boss.phase === 0 ? 1.5 : 0.8;
+
+        // Geometric shard attack
+        const count = boss.phase === 0 ? 6 : 10;
+        for (let i = 0; i < count; i++) {
+          const sa = (i / count) * Math.PI * 2 + boss.rotation;
+          enemyProjectiles.push({
+            x: boss.x, y: boss.y,
+            vx: Math.cos(sa) * 200, vy: Math.sin(sa) * 200,
+            life: 3, damage: 12, size: 5, color: COLORS.blue,
+          });
+        }
+        playSound('boss');
+
+        // Spawn mini enemies occasionally
+        if (Math.random() < 0.3) {
+          spawnEnemy('drone', boss.x + rand(-100, 100), boss.y + rand(-100, 100));
+        }
+      }
+      break;
+    }
+
+    case 'trimble': {
+      if (hpRatio < 0.4) boss.phase = 1;
+
+      if (boss.phase === 0) {
+        // Orbit player
+        const orbit = boss.timer * 0.8;
+        boss.x = player.x + Math.cos(orbit) * 250;
+        boss.y = player.y + Math.sin(orbit) * 250;
+
+        if (boss.attackTimer <= 0) {
+          boss.attackTimer = 1.2;
+          // Sweeping laser
+          for (let i = -3; i <= 3; i++) {
+            const sa = angle(boss, player) + i * 0.15;
+            enemyProjectiles.push({
+              x: boss.x, y: boss.y,
+              vx: Math.cos(sa) * 250, vy: Math.sin(sa) * 250,
+              life: 2.5, damage: 10, size: 4, color: COLORS.orange,
+            });
+          }
+          playSound('boss');
+        }
+      } else {
+        // Charge like snow plow!
+        const a = angle(boss, player);
+        boss.x += Math.cos(a) * 300 * dt;
+        boss.y += Math.sin(a) * 300 * dt;
+
+        if (boss.attackTimer <= 0) {
+          boss.attackTimer = 2;
+          // Deploy mines
+          for (let i = 0; i < 4; i++) {
+            potholes.push({
+              x: boss.x + rand(-80, 80), y: boss.y + rand(-80, 80),
+              size: 5, maxSize: 20, life: 8, growing: true,
+            });
+          }
+        }
+
+        if (dist(boss, player) < boss.size + 20 && player.invincible <= 0 && player.salt <= 0) {
+          player.hp -= 25;
+          player.invincible = 1;
+          addShake(15, 0.3);
+        }
+      }
+      break;
+    }
+
+    case 'singularity': {
+      // Multi-phase
+      if (hpRatio > 0.75) boss.phase = 0;
+      else if (hpRatio > 0.5) boss.phase = 1;
+      else if (hpRatio > 0.25) boss.phase = 2;
+      else boss.phase = 3;
+
+      // Slowly follow
+      const a = angle(boss, player);
+      boss.x += Math.cos(a) * 30 * dt;
+      boss.y += Math.sin(a) * 30 * dt;
+
+      if (boss.attackTimer <= 0) {
+        switch(boss.phase) {
+          case 0: // Debris waves
+            boss.attackTimer = 1.0;
+            for (let i = 0; i < 12; i++) {
+              const sa = (i / 12) * Math.PI * 2 + boss.rotation;
+              enemyProjectiles.push({
+                x: boss.x, y: boss.y,
+                vx: Math.cos(sa) * 180, vy: Math.sin(sa) * 180,
+                life: 3, damage: 10, size: 6, color: COLORS.red,
+              });
+            }
+            break;
+          case 1: // Spawn all enemy types
+            boss.attackTimer = 2.0;
+            spawnEnemy('drone', boss.x + rand(-200, 200), boss.y + rand(-200, 200));
+            spawnEnemy('drone', boss.x + rand(-200, 200), boss.y + rand(-200, 200));
+            if (Math.random() < 0.5) spawnEnemy('pothole', boss.x + rand(-150, 150), boss.y + rand(-150, 150));
+            break;
+          case 2: // Snow plow waves!
+            boss.attackTimer = 1.5;
+            const sides = [0, Math.PI/2, Math.PI, Math.PI*1.5];
+            for (const side of sides) {
+              if (Math.random() < 0.5) {
+                const sx = boss.x + Math.cos(side) * 600;
+                const sy = boss.y + Math.sin(side) * 600;
+                const plow = spawnEnemy('snowplow', sx, sy, 'tracking');
+                plow.angle = angle(plow, player);
+              }
+            }
+            break;
+          case 3: // Gravitational pull + everything
+            boss.attackTimer = 0.8;
+            // Pull player toward boss
+            const pullA = angle(player, boss);
+            player.x += Math.cos(pullA) * 80 * dt;
+            player.y += Math.sin(pullA) * 80 * dt;
+            // Spray
+            for (let i = 0; i < 8; i++) {
+              const sa = rand(0, Math.PI * 2);
+              enemyProjectiles.push({
+                x: boss.x, y: boss.y,
+                vx: Math.cos(sa) * 220, vy: Math.sin(sa) * 220,
+                life: 2.5, damage: 8, size: 5, color: COLORS.red,
+              });
+            }
+            break;
+        }
+        playSound('boss');
+      }
+
+      // Scan chunks crystallize
+      if (boss.hp < boss.maxHp) {
+        const pct = 1 - hpRatio;
+        scanTile(boss.x, boss.y, pct * 200);
+      }
+      break;
+    }
+  }
+
+  // Boss death
+  if (boss.hp <= 0) {
+    onBossDeath();
+  }
+
+  // Boss damages player on contact
+  if (boss && dist(boss, player) < boss.size + 15 && player.invincible <= 0 && player.salt <= 0) {
+    player.hp -= 20 * dt;
+    if (Math.random() < 0.1) addShake(5, 0.1);
+  }
+}
+
+function onBossDeath() {
+  playSound('bomb');
+  addShake(20, 1.0);
+  for (let i = 0; i < 50; i++) {
+    spawnParticles(boss.x, boss.y, randChoice([COLORS.cyan, COLORS.green, COLORS.white, COLORS.blue]), 3, 300, 1.0, 4);
+  }
+  spawnRing(boss.x, boss.y, COLORS.white, 400, 60);
+
+  player.score += 5000 * player.multiplier;
+  floatingTexts.push({ x: boss.x, y: boss.y - 30, text: boss.defeatText, life: 5, color: COLORS.gold });
+
+  // Scan everything remaining
+  for (let r = 0; r < MAP_ROWS; r++) {
+    for (let c = 0; c < MAP_COLS; c++) {
+      if (tileMap[r][c] === 1 && !scanMap[r][c]) {
+        scanMap[r][c] = true;
+        scannedRoadTiles++;
+      }
+    }
+  }
+
+  boss = null;
+  bossActive = false;
+
+  // Level complete
+  if (currentLevel >= 2) {
+    game.state = 'victory';
+  } else {
+    game.state = 'levelComplete';
+    game.transitionTimer = 0;
+  }
+}
+
+function drawBoss() {
+  if (!boss) return;
+  const sx = boss.x - cam.x;
+  const sy = boss.y - cam.y;
+
+  ctx.save();
+  ctx.translate(sx, sy);
+
+  switch(boss.type) {
+    case 'esri':
+      ctx.rotate(boss.rotation);
+      // Rotating cube
+      ctx.strokeStyle = COLORS.blue;
+      ctx.lineWidth = 3;
+      ctx.fillStyle = 'rgba(68,136,255,0.15)';
+      ctx.beginPath();
+      ctx.rect(-boss.size, -boss.size, boss.size * 2, boss.size * 2);
+      ctx.fill(); ctx.stroke();
+      // Inner diamond
+      ctx.rotate(Math.PI / 4);
+      ctx.strokeStyle = COLORS.cyan;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.rect(-boss.size * 0.6, -boss.size * 0.6, boss.size * 1.2, boss.size * 1.2);
+      ctx.stroke();
+      ctx.rotate(-Math.PI / 4);
+      // Data streams
+      for (let i = 0; i < 4; i++) {
+        const a = (i / 4) * Math.PI * 2 + boss.timer;
+        ctx.strokeStyle = `rgba(0,229,255,${0.3 + Math.sin(boss.timer * 2 + i) * 0.2})`;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(Math.cos(a) * boss.size * 1.5, Math.sin(a) * boss.size * 1.5);
+        ctx.stroke();
+      }
+      break;
+
+    case 'trimble':
+      // Robot body
+      ctx.strokeStyle = COLORS.orange;
+      ctx.lineWidth = 3;
+      ctx.fillStyle = 'rgba(255,102,0,0.15)';
+      // Body
+      ctx.beginPath();
+      ctx.arc(0, 0, boss.size, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
+      // Total station head
+      ctx.strokeStyle = COLORS.yellow;
+      ctx.lineWidth = 2;
+      const headA = angle(boss, player);
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(Math.cos(headA) * boss.size * 1.3, Math.sin(headA) * boss.size * 1.3);
+      ctx.stroke();
+      // Tripod legs
+      for (let i = 0; i < 3; i++) {
+        const la = (i / 3) * Math.PI * 2 + Math.PI / 2;
+        ctx.strokeStyle = COLORS.orange;
+        ctx.beginPath();
+        ctx.moveTo(0, boss.size * 0.5);
+        ctx.lineTo(Math.cos(la) * boss.size * 0.8, Math.sin(la) * boss.size * 0.8 + boss.size * 0.5);
+        ctx.stroke();
+      }
+      break;
+
+    case 'singularity':
+      // Swirling chaos mass
+      const hpRatio = boss.hp / boss.maxHp;
+      ctx.fillStyle = `rgba(255,34,68,${0.1 + (1 - hpRatio) * 0.1})`;
+      ctx.strokeStyle = COLORS.red;
+      ctx.lineWidth = 2;
+      // Main body - irregular
+      ctx.beginPath();
+      for (let i = 0; i < 20; i++) {
+        const a = (i / 20) * Math.PI * 2;
+        const r = boss.size + Math.sin(boss.timer * 3 + i * 1.5) * 20;
+        if (i === 0) ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r);
+        else ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+      }
+      ctx.closePath();
+      ctx.fill(); ctx.stroke();
+
+      // Inner glow based on damage
+      if (hpRatio < 1) {
+        ctx.fillStyle = `rgba(0,229,255,${(1 - hpRatio) * 0.3})`;
+        ctx.beginPath();
+        ctx.arc(0, 0, boss.size * (1 - hpRatio), 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Tentacle-like extensions
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2 + boss.timer * 0.3;
+        const len = boss.size * 1.5 + Math.sin(boss.timer * 2 + i) * 30;
+        ctx.strokeStyle = `rgba(255,34,68,${0.5 + Math.sin(boss.timer + i) * 0.2})`;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(a) * boss.size * 0.5, Math.sin(a) * boss.size * 0.5);
+        const midX = Math.cos(a + Math.sin(boss.timer + i) * 0.3) * len * 0.7;
+        const midY = Math.sin(a + Math.sin(boss.timer + i) * 0.3) * len * 0.7;
+        ctx.quadraticCurveTo(midX, midY, Math.cos(a) * len, Math.sin(a) * len);
+        ctx.stroke();
+      }
+      break;
+  }
+
+  ctx.restore();
+
+  // Boss HP bar at top
+  const barW = 400, barH = 16;
+  const barX = (canvas.width - barW) / 2;
+  const barY = 50;
+  ctx.fillStyle = 'rgba(0,0,0,0.7)';
+  ctx.fillRect(barX - 2, barY - 2, barW + 4, barH + 4);
+  ctx.fillStyle = COLORS.redDark;
+  ctx.fillRect(barX, barY, barW, barH);
+  ctx.fillStyle = COLORS.red;
+  ctx.fillRect(barX, barY, barW * (boss.hp / boss.maxHp), barH);
+  ctx.fillStyle = COLORS.white;
+  ctx.font = '11px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(boss.label, canvas.width / 2, barY + 12);
+}
+
+// ============================================================
+// WAVE / SPAWN SYSTEM
+// ============================================================
+let spawnTimer = 0;
+let waveNumber = 0;
+let plowWarnings = []; // {side, timer}
+
+const LEVEL_DATA = [
+  { name: 'NASHVILLE', subtitle: 'Music City', spawnRate: 2.5, plowRate: 6, bossLevel: 0 },
+  { name: 'BOSTON', subtitle: 'Beantown', spawnRate: 1.8, plowRate: 3, bossLevel: 1 },
+  { name: 'NEW YORK CITY', subtitle: 'The Big Apple', spawnRate: 1.2, plowRate: 2, bossLevel: 2 },
+];
+
+const PARTNERSHIPS = [
+  { name: 'ESRI', value: '$1M-$10M+ partnership', deal: 'Living Atlas Integration' },
+  { name: 'TRIMBLE/CITYWORKS', value: '$500K-$3M partnership', deal: '700 Municipal Customers' },
+  { name: 'TYLER TECHNOLOGIES', value: '$500K-$5M partnership', deal: 'Government Solutions' },
+  { name: 'DELOITTE', value: '$2M-$3M partnership', deal: '50+ Government Clients' },
+  { name: 'AECOM', value: '$2M-$3M partnership', deal: 'Infrastructure Planning' },
+  { name: 'VERISK', value: '$1M-$5M partnership', deal: 'Insurance Distribution' },
+  { name: 'VINCI', value: '$2M-$3M partnership', deal: 'Construction Intelligence' },
+  { name: 'CRH', value: '$2M-$3M partnership', deal: 'Materials Analytics' },
+];
+
+let currentLevel = 0;
+let levelTimer = 0;
+let bossSpawned = false;
+
+function updateSpawns(dt) {
+  if (bossActive) return;
+  if (bossSpawned) return;
+
+  const ld = LEVEL_DATA[currentLevel];
+  levelTimer += dt;
+  spawnTimer += dt;
+
+  // Check if ready for boss
+  if (getScanPercent() >= SCAN_GOAL && !bossSpawned) {
+    bossSpawned = true;
+    // Clear some enemies
+    while (enemies.length > 5) enemies.pop();
+    spawnBoss(ld.bossLevel);
+    return;
+  }
+
+  // Regular enemy spawns
+  if (spawnTimer >= ld.spawnRate) {
+    spawnTimer = 0;
+    waveNumber++;
+
+    // Pick spawn location (on road, away from player)
+    let sx, sy, attempts = 0;
+    do {
+      sx = rand(100, MAP_W - 100);
+      sy = rand(100, MAP_H - 100);
+      attempts++;
+    } while ((dist({x: sx, y: sy}, player) < 400 || !isRoad(sx, sy)) && attempts < 20);
+
+    // Spawn wave
+    const difficulty = currentLevel + levelTimer / 60;
+    const r = Math.random();
+
+    if (r < 0.3) {
+      // Drones
+      const count = Math.min(2 + Math.floor(difficulty), 6);
+      for (let i = 0; i < count; i++) {
+        spawnEnemy('drone', sx + rand(-50, 50), sy + rand(-50, 50));
+      }
+    } else if (r < 0.5) {
+      spawnEnemy('pothole', sx, sy);
+    } else if (r < 0.65) {
+      spawnEnemy('turret', sx, sy);
+    } else if (r < 0.75) {
+      spawnEnemy('blob', sx, sy);
+    } else {
+      // Extra drones
+      for (let i = 0; i < 3; i++) {
+        spawnEnemy('drone', sx + rand(-60, 60), sy + rand(-60, 60));
+      }
+    }
+  }
+
+  // Snow plow spawns (separate timer, they're special)
+  if (!game.plowTimer) game.plowTimer = ld.plowRate;
+  game.plowTimer -= dt;
+
+  if (game.plowTimer <= 0) {
+    game.plowTimer = ld.plowRate * rand(0.7, 1.3);
+    spawnSnowPlow();
+  }
+}
+
+function spawnSnowPlow() {
+  // Choose edge
+  const side = randInt(0, 3); // 0=top, 1=right, 2=bottom, 3=left
+  let sx, sy, a;
+
+  switch(side) {
+    case 0: sx = rand(100, MAP_W - 100); sy = -50; a = Math.PI / 2; break;
+    case 1: sx = MAP_W + 50; sy = rand(100, MAP_H - 100); a = Math.PI; break;
+    case 2: sx = rand(100, MAP_W - 100); sy = MAP_H + 50; a = -Math.PI / 2; break;
+    case 3: sx = -50; sy = rand(100, MAP_H - 100); a = 0; break;
+  }
+
+  // Warning
+  plowWarnings.push({ side, timer: 1.0 });
+
+  // Pick variant
+  const difficulty = currentLevel + levelTimer / 60;
+  let variant = 'standard';
+  const r = Math.random();
+  if (r < 0.15 && difficulty > 1) variant = 'armored';
+  else if (r < 0.4) variant = 'tracking';
+
+  // Plow train?
+  if (Math.random() < 0.15 * difficulty) {
+    // Plow train - 3 in a row
+    for (let i = 0; i < 3; i++) {
+      const delay = i * 80;
+      const offX = side === 0 || side === 2 ? i * 60 : 0;
+      const offY = side === 1 || side === 3 ? i * 60 : 0;
+      const p = spawnEnemy('snowplow', sx - offX * Math.cos(a + Math.PI), sy - offY * Math.sin(a + Math.PI), variant);
+      p.angle = side === 0 || side === 2 ? (side === 0 ? Math.PI/2 : -Math.PI/2) :
+                (side === 1 ? Math.PI : 0);
+      if (variant === 'tracking') p.angle = angle(p, player);
+    }
+  } else {
+    const p = spawnEnemy('snowplow', sx, sy, variant);
+    p.angle = a;
+    if (variant === 'tracking') p.angle = angle(p, player);
+  }
+}
+
+function updatePlowWarnings(dt) {
+  for (let i = plowWarnings.length - 1; i >= 0; i--) {
+    plowWarnings[i].timer -= dt;
+    if (plowWarnings[i].timer <= 0) plowWarnings.splice(i, 1);
+  }
+}
+
+function drawPlowWarnings() {
+  for (const w of plowWarnings) {
+    if (Math.floor(w.timer * 8) % 2 === 0) continue;
+    ctx.fillStyle = `rgba(255,102,0,${clamp(w.timer, 0, 0.5)})`;
+    switch(w.side) {
+      case 0: ctx.fillRect(0, 0, canvas.width, 8); break;
+      case 1: ctx.fillRect(canvas.width - 8, 0, 8, canvas.height); break;
+      case 2: ctx.fillRect(0, canvas.height - 8, canvas.width, 8); break;
+      case 3: ctx.fillRect(0, 0, 8, canvas.height); break;
+    }
+  }
+}
+
+// ============================================================
+// HUD
+// ============================================================
+function drawHUD() {
+  // Health bar - top left
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.fillRect(15, 12, 204, 24);
+  ctx.fillStyle = COLORS.greenDark;
+  ctx.fillRect(17, 14, 200, 20);
+  const hpPct = clamp(player.hp / player.maxHp, 0, 1);
+  const hpColor = hpPct > 0.5 ? COLORS.green : hpPct > 0.25 ? COLORS.yellow : COLORS.red;
+  ctx.fillStyle = hpColor;
+  ctx.fillRect(17, 14, 200 * hpPct, 20);
+  ctx.strokeStyle = COLORS.green;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(17, 14, 200, 20);
+  ctx.fillStyle = COLORS.white;
+  ctx.font = '11px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText(`HP: ${Math.ceil(player.hp)}/${player.maxHp}`, 22, 28);
+
+  // Bombs
+  ctx.fillStyle = COLORS.blue;
+  ctx.font = '12px monospace';
+  ctx.fillText(`BOMBS: ${player.bombs}`, 17, 52);
+
+  // Plow kills
+  ctx.fillStyle = COLORS.orange;
+  ctx.fillText(`PLOW KILLS: ${player.plowKills}`, 17, 68);
+
+  // City name and scan % - top center
+  const ld = LEVEL_DATA[currentLevel];
+  ctx.fillStyle = COLORS.white;
+  ctx.font = '14px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(ld.name, canvas.width / 2, 22);
+
+  // Scan bar
+  const scanPct = getScanPercent();
+  const scanBarW = 200;
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.fillRect(canvas.width/2 - scanBarW/2 - 2, 28, scanBarW + 4, 14);
+  ctx.fillStyle = '#002211';
+  ctx.fillRect(canvas.width/2 - scanBarW/2, 30, scanBarW, 10);
+  ctx.fillStyle = COLORS.cyan;
+  ctx.fillRect(canvas.width/2 - scanBarW/2, 30, scanBarW * scanPct, 10);
+  ctx.strokeStyle = COLORS.cyanDark;
+  ctx.strokeRect(canvas.width/2 - scanBarW/2, 30, scanBarW, 10);
+  ctx.fillStyle = COLORS.white;
+  ctx.font = '9px monospace';
+  ctx.fillText(`SCANNED: ${(scanPct * 100).toFixed(1)}%  (${(SCAN_GOAL * 100)}% to unlock boss)`, canvas.width / 2, 52);
+
+  // Score and multiplier - top right
+  ctx.textAlign = 'right';
+  ctx.fillStyle = COLORS.gold;
+  ctx.font = '14px monospace';
+  ctx.fillText(`SCORE: ${player.score}`, canvas.width - 17, 22);
+  if (player.multiplier > 1) {
+    ctx.fillStyle = COLORS.yellow;
+    ctx.font = '12px monospace';
+    ctx.fillText(`x${player.multiplier} MULTIPLIER`, canvas.width - 17, 38);
+  }
+
+  // Active power-ups bottom center
+  ctx.textAlign = 'center';
+  ctx.font = '10px monospace';
+  let py = canvas.height - 20;
+  if (player.autoTarget > 0) { ctx.fillStyle = COLORS.yellow; ctx.fillText(`D1 AUTO-TARGET: ${player.autoTarget.toFixed(1)}s`, canvas.width/2, py); py -= 14; }
+  if (player.doubleDmg > 0) { ctx.fillStyle = COLORS.red; ctx.fillText(`D2 DOUBLE DMG: ${player.doubleDmg.toFixed(1)}s`, canvas.width/2, py); py -= 14; }
+  if (player.radar > 0) { ctx.fillStyle = COLORS.purple; ctx.fillText(`D3 RADAR: ${player.radar.toFixed(1)}s`, canvas.width/2, py); py -= 14; }
+  if (player.slowEnemies > 0) { ctx.fillStyle = COLORS.blue; ctx.fillText(`D4 SLOW: ${player.slowEnemies.toFixed(1)}s`, canvas.width/2, py); py -= 14; }
+  if (player.omniShot > 0) { ctx.fillStyle = COLORS.pink; ctx.fillText(`D5 OMNI-FIRE: ${player.omniShot.toFixed(1)}s`, canvas.width/2, py); py -= 14; }
+  if (player.salt > 0) { ctx.fillStyle = COLORS.yellow; ctx.fillText(`SALT INVINCIBLE: ${player.salt.toFixed(1)}s`, canvas.width/2, py); py -= 14; }
+
+  // MCP mode indicator
+  if (mcpMode) {
+    ctx.fillStyle = COLORS.purple;
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText('MCP MODE ACTIVE', 17, canvas.height - 10);
+  }
+
+  // Weapon indicator bottom left
+  ctx.fillStyle = COLORS.cyan;
+  ctx.font = '10px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('PRIMARY: LiDAR BLASTER [LMB]', 17, canvas.height - 30);
+  ctx.fillStyle = COLORS.blue;
+  ctx.fillText('SECONDARY: SpatialLink Bomb [SPACE]', 17, canvas.height - 44);
+}
+
+// ============================================================
+// GAME STATES
+// ============================================================
+const game = {
+  state: 'title', // title, playing, levelComplete, partnership, gameOver, victory
+  transitionTimer: 0,
+  plowTimer: 0,
+  titleRotation: 0,
+};
+
+function startGame() {
+  currentLevel = 0;
+  player.score = 0;
+  player.plowKills = 0;
+  startLevel(0);
+  game.state = 'playing';
+}
+
+function startLevel(level) {
+  currentLevel = level;
+  generateMap(level);
+  resetPlayer();
+  // Place player on a road
+  for (let r = 0; r < MAP_ROWS; r++) {
+    for (let c = 0; c < MAP_COLS; c++) {
+      if (tileMap[r][c] === 1) {
+        player.x = c * TILE_SIZE + TILE_SIZE / 2;
+        player.y = r * TILE_SIZE + TILE_SIZE / 2;
+        r = MAP_ROWS; break;
+      }
+    }
+  }
+  enemies.length = 0;
+  projectiles.length = 0;
+  enemyProjectiles.length = 0;
+  particles.length = 0;
+  pickups.length = 0;
+  potholes.length = 0;
+  snowTrails.length = 0;
+  bombRings.length = 0;
+  floatingTexts.length = 0;
+  plowWarnings.length = 0;
+  boss = null;
+  bossActive = false;
+  bossSpawned = false;
+  spawnTimer = 0;
+  waveNumber = 0;
+  levelTimer = 0;
+  game.plowTimer = LEVEL_DATA[level].plowRate;
+  game.levelBanner = 3.0;
+
+  cam.x = player.x - canvas.width / 2;
+  cam.y = player.y - canvas.height / 2;
+}
+
+function advanceLevel() {
+  if (game.state === 'levelComplete') {
+    game.state = 'partnership';
+    game.transitionTimer = 0;
+  } else if (game.state === 'partnership') {
+    if (currentLevel + 1 < LEVEL_DATA.length) {
+      startLevel(currentLevel + 1);
+      game.state = 'playing';
+    } else {
+      game.state = 'victory';
+    }
+  }
+}
+
+// ============================================================
+// DRAW SCREENS
+// ============================================================
+function drawTitleScreen() {
+  ctx.fillStyle = COLORS.bg;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Rotating grid
+  game.titleRotation += 0.003;
+  ctx.save();
+  ctx.translate(canvas.width / 2, canvas.height / 2 + 80);
+  ctx.rotate(game.titleRotation);
+  ctx.strokeStyle = COLORS.grid;
+  ctx.lineWidth = 1;
+  for (let i = -10; i <= 10; i++) {
+    ctx.beginPath();
+    ctx.moveTo(i * 40, -400); ctx.lineTo(i * 40, 400);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-400, i * 40); ctx.lineTo(400, i * 40);
+    ctx.stroke();
+  }
+  // Buildings on grid
+  ctx.strokeStyle = COLORS.cyanDark;
+  ctx.lineWidth = 1.5;
+  for (let i = -5; i <= 5; i += 2) {
+    for (let j = -5; j <= 5; j += 2) {
+      const h = Math.abs((i * 3 + j * 7) % 5) * 8 + 10;
+      ctx.strokeRect(i * 40 - 15, j * 40 - 15, 30, 30);
+    }
+  }
+  ctx.restore();
+
+  // Title
+  ctx.fillStyle = COLORS.cyan;
+  ctx.font = 'bold 48px monospace';
+  ctx.textAlign = 'center';
+  ctx.shadowColor = COLORS.cyan;
+  ctx.shadowBlur = 20;
+  ctx.fillText('INFRASTRUCTURE WARS', canvas.width / 2, 160);
+  ctx.shadowBlur = 0;
+
+  ctx.fillStyle = COLORS.green;
+  ctx.font = '18px monospace';
+  ctx.fillText('The Cyvl Saga', canvas.width / 2, 195);
+
+  ctx.fillStyle = COLORS.white;
+  ctx.font = '13px monospace';
+  ctx.fillText('Make the physical world legible to AI', canvas.width / 2, 230);
+
+  // Controls
+  ctx.fillStyle = COLORS.cyanDark;
+  ctx.font = '12px monospace';
+  ctx.fillText('WASD — Move  |  MOUSE — Aim  |  LMB — Shoot  |  SPACE — Bomb', canvas.width / 2, 420);
+  ctx.fillText('Scan roads with your LiDAR. Defeat enemies. Liberate cities.', canvas.width / 2, 445);
+
+  // Start prompt
+  const flash = Math.sin(performance.now() / 400) > 0;
+  if (flash) {
+    ctx.fillStyle = COLORS.yellow;
+    ctx.font = '16px monospace';
+    ctx.fillText('[ PRESS ENTER TO START ]', canvas.width / 2, 520);
+  }
+
+  if (mcpMode) {
+    ctx.fillStyle = COLORS.purple;
+    ctx.font = '14px monospace';
+    ctx.fillText('MCP MODE UNLOCKED — 2x FIRE RATE', canvas.width / 2, 560);
+  }
+}
+
+function drawLevelBanner() {
+  if (!game.levelBanner || game.levelBanner <= 0) return;
+  game.levelBanner -= 1/60;
+  const alpha = clamp(game.levelBanner, 0, 1);
+  const ld = LEVEL_DATA[currentLevel];
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = 'rgba(0,0,0,0.7)';
+  ctx.fillRect(0, canvas.height / 2 - 60, canvas.width, 120);
+  ctx.fillStyle = COLORS.cyan;
+  ctx.font = 'bold 36px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(`LEVEL ${currentLevel + 1}: ${ld.name}`, canvas.width / 2, canvas.height / 2 - 10);
+  ctx.fillStyle = COLORS.white;
+  ctx.font = '16px monospace';
+  ctx.fillText(ld.subtitle, canvas.width / 2, canvas.height / 2 + 25);
+  ctx.fillText(`Scan ${SCAN_GOAL * 100}% of roads to unlock the boss`, canvas.width / 2, canvas.height / 2 + 48);
+  ctx.globalAlpha = 1;
+}
+
+function drawLevelComplete() {
+  ctx.fillStyle = COLORS.bg;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.fillStyle = COLORS.green;
+  ctx.font = 'bold 36px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('LEVEL COMPLETE!', canvas.width / 2, 200);
+
+  ctx.fillStyle = COLORS.cyan;
+  ctx.font = '18px monospace';
+  ctx.fillText(`${LEVEL_DATA[currentLevel].name} LIBERATED`, canvas.width / 2, 250);
+
+  ctx.fillStyle = COLORS.white;
+  ctx.font = '14px monospace';
+  ctx.fillText(`Score: ${player.score}`, canvas.width / 2, 300);
+  ctx.fillText(`Snow Plows Destroyed: ${player.plowKills}`, canvas.width / 2, 325);
+  ctx.fillText(`Scan Coverage: ${(getScanPercent() * 100).toFixed(1)}%`, canvas.width / 2, 350);
+
+  if (getScanPercent() >= 1.0) {
+    ctx.fillStyle = COLORS.gold;
+    ctx.fillText('FULL COVERAGE ACHIEVED — SpatialLink fusion complete', canvas.width / 2, 390);
+  }
+
+  const flash = Math.sin(performance.now() / 400) > 0;
+  if (flash) {
+    ctx.fillStyle = COLORS.yellow;
+    ctx.font = '14px monospace';
+    ctx.fillText('[ PRESS ENTER TO CONTINUE ]', canvas.width / 2, 450);
+  }
+}
+
+function drawPartnership() {
+  ctx.fillStyle = COLORS.bg;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const p = PARTNERSHIPS[currentLevel % PARTNERSHIPS.length];
+
+  ctx.fillStyle = COLORS.gold;
+  ctx.font = 'bold 28px monospace';
+  ctx.textAlign = 'center';
+  ctx.shadowColor = COLORS.gold;
+  ctx.shadowBlur = 15;
+  ctx.fillText('PARTNERSHIP SECURED', canvas.width / 2, 180);
+  ctx.shadowBlur = 0;
+
+  ctx.strokeStyle = COLORS.gold;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(canvas.width / 2 - 200, 210, 400, 200);
+
+  ctx.fillStyle = COLORS.white;
+  ctx.font = 'bold 24px monospace';
+  ctx.fillText(p.name, canvas.width / 2, 260);
+
+  ctx.fillStyle = COLORS.green;
+  ctx.font = '20px monospace';
+  ctx.fillText(p.value, canvas.width / 2, 310);
+
+  ctx.fillStyle = COLORS.cyan;
+  ctx.font = '14px monospace';
+  ctx.fillText(p.deal, canvas.width / 2, 350);
+
+  const flash = Math.sin(performance.now() / 400) > 0;
+  if (flash) {
+    ctx.fillStyle = COLORS.yellow;
+    ctx.font = '14px monospace';
+    ctx.fillText('[ PRESS ENTER TO CONTINUE ]', canvas.width / 2, 470);
+  }
+}
+
+function drawGameOver() {
+  ctx.fillStyle = COLORS.bg;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.fillStyle = COLORS.red;
+  ctx.font = 'bold 42px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('MISSION FAILED', canvas.width / 2, 220);
+
+  ctx.fillStyle = COLORS.white;
+  ctx.font = '16px monospace';
+  ctx.fillText('The infrastructure remains in darkness...', canvas.width / 2, 280);
+
+  ctx.fillStyle = COLORS.cyan;
+  ctx.font = '14px monospace';
+  ctx.fillText(`Final Score: ${player.score}`, canvas.width / 2, 340);
+  ctx.fillText(`Snow Plows Destroyed: ${player.plowKills}`, canvas.width / 2, 365);
+
+  const flash = Math.sin(performance.now() / 400) > 0;
+  if (flash) {
+    ctx.fillStyle = COLORS.yellow;
+    ctx.font = '14px monospace';
+    ctx.fillText('[ PRESS ENTER TO RETRY ]', canvas.width / 2, 440);
+  }
+}
+
+function drawVictory() {
+  ctx.fillStyle = COLORS.bg;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Animated grid
+  const t = performance.now() / 1000;
+  ctx.strokeStyle = `rgba(0,229,255,${0.1 + Math.sin(t) * 0.05})`;
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 32; i++) {
+    ctx.beginPath();
+    ctx.moveTo(i * 40 + Math.sin(t + i * 0.3) * 5, 0);
+    ctx.lineTo(i * 40 + Math.sin(t + i * 0.3) * 5, canvas.height);
+    ctx.stroke();
+  }
+  for (let i = 0; i < 18; i++) {
+    ctx.beginPath();
+    ctx.moveTo(0, i * 40 + Math.cos(t + i * 0.3) * 5);
+    ctx.lineTo(canvas.width, i * 40 + Math.cos(t + i * 0.3) * 5);
+    ctx.stroke();
+  }
+
+  ctx.fillStyle = COLORS.cyan;
+  ctx.font = 'bold 32px monospace';
+  ctx.textAlign = 'center';
+  ctx.shadowColor = COLORS.cyan;
+  ctx.shadowBlur = 25;
+  ctx.fillText('ALL 600+ CITIES SCANNED', canvas.width / 2, 180);
+  ctx.shadowBlur = 0;
+
+  ctx.fillStyle = COLORS.green;
+  ctx.font = '18px monospace';
+  ctx.fillText('INFRASTRUCTURE MADE LEGIBLE TO AI', canvas.width / 2, 230);
+
+  ctx.fillStyle = COLORS.white;
+  ctx.font = '16px monospace';
+  ctx.fillText('THE PHYSICAL WORLD IS NOW QUERYABLE', canvas.width / 2, 270);
+
+  ctx.fillStyle = COLORS.gold;
+  ctx.font = '14px monospace';
+  ctx.fillText(`Final Score: ${player.score}`, canvas.width / 2, 340);
+  ctx.fillText(`Snow Plows Annihilated: ${player.plowKills}`, canvas.width / 2, 365);
+
+  // Partnership summary
+  ctx.fillStyle = COLORS.cyan;
+  ctx.font = '11px monospace';
+  let py = 410;
+  for (let i = 0; i <= currentLevel && i < PARTNERSHIPS.length; i++) {
+    ctx.fillText(`${PARTNERSHIPS[i].name}: ${PARTNERSHIPS[i].value}`, canvas.width / 2, py);
+    py += 20;
+  }
+
+  const flash = Math.sin(performance.now() / 400) > 0;
+  if (flash) {
+    ctx.fillStyle = COLORS.yellow;
+    ctx.font = '14px monospace';
+    ctx.fillText('[ PRESS ENTER FOR TITLE ]', canvas.width / 2, canvas.height - 50);
+  }
+}
+
+// ============================================================
+// RADAR PULSE EFFECT (D3 power-up)
+// ============================================================
+function drawRadar() {
+  if (player.radar <= 0) return;
+  for (const e of enemies) {
+    const sx = e.x - cam.x, sy = e.y - cam.y;
+    if (sx < -50 || sx > canvas.width + 50 || sy < -50 || sy > canvas.height + 50) {
+      // Draw arrow on edge pointing toward off-screen enemy
+      const a = angle(player, e);
+      const edgeX = clamp(sx, 30, canvas.width - 30);
+      const edgeY = clamp(sy, 60, canvas.height - 30);
+      ctx.fillStyle = COLORS.purple;
+      ctx.beginPath();
+      ctx.arc(edgeX, edgeY, 5, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      ctx.strokeStyle = `rgba(170,68,255,0.5)`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(sx, sy, e.size + 10, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+}
+
+// ============================================================
+// MAIN UPDATE
+// ============================================================
+function update(dt) {
+  if (game.state !== 'playing') return;
+
+  updatePlayer(dt);
+  updateCamera();
+  updateEnemies(dt);
+  updateBoss(dt);
+  updateProjectiles(dt);
+  updateSpawns(dt);
+  updatePotholes(dt);
+  updatePickups(dt);
+  updateSnowTrails(dt);
+  updateParticles(dt);
+  updateBombRings(dt);
+  updateFloatingTexts(dt);
+  updatePlowWarnings(dt);
+
+  // Shake decay
+  if (shakeTime > 0) {
+    shakeTime -= dt;
+    if (shakeTime <= 0) { shakeAmount = 0; }
+  }
+
+  // Player death
+  if (player.hp <= 0) {
+    game.state = 'gameOver';
+    playSound('explosion');
+  }
+}
+
+// ============================================================
+// MAIN DRAW
+// ============================================================
+function draw() {
+  ctx.fillStyle = COLORS.bg;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  switch(game.state) {
+    case 'title':
+      drawTitleScreen();
+      break;
+    case 'playing':
+      drawMap();
+      drawSnowTrails();
+      drawPotholes();
+      drawPickups();
+      drawEnemies();
+      drawBoss();
+      drawPlayer();
+      drawProjectiles();
+      drawBombRings();
+      drawParticles();
+      drawFloatingTexts();
+      drawPlowWarnings();
+      drawRadar();
+      drawHUD();
+      drawLevelBanner();
+      break;
+    case 'levelComplete':
+      drawLevelComplete();
+      break;
+    case 'partnership':
+      drawPartnership();
+      break;
+    case 'gameOver':
+      drawGameOver();
+      break;
+    case 'victory':
+      drawVictory();
+      break;
+  }
+}
+
+// ============================================================
+// GAME LOOP
+// ============================================================
+let lastTime = 0;
+function gameLoop(timestamp) {
+  const dt = Math.min((timestamp - lastTime) / 1000, 0.05); // Cap at 50ms
+  lastTime = timestamp;
+
+  update(dt);
+  draw();
+
+  requestAnimationFrame(gameLoop);
+}
+
+// Handle resize
+function resize() {
+  const aspect = 1280 / 720;
+  let w = window.innerWidth;
+  let h = window.innerHeight;
+  if (w / h > aspect) {
+    w = h * aspect;
+  } else {
+    h = w / aspect;
+  }
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+}
+window.addEventListener('resize', resize);
+resize();
+
+// Start
+requestAnimationFrame(gameLoop);
+</script>
+</body>
+</html>
