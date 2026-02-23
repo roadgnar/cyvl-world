@@ -518,6 +518,8 @@ document.addEventListener('keydown', e => {
     briefingIndex = 0;
     briefingTimer = 0;
     briefingDone = false;
+    briefingText = '';
+    return; // Don't let this Enter bleed into briefing handler
   }
   if (screen === SCREENS.BRIEFING) {
     if (e.key === '1') { difficulty = 0; }
@@ -526,19 +528,24 @@ document.addEventListener('keydown', e => {
     if (briefingDone && (e.key === 'Enter' || e.key === ' ')) {
       setDifficulty();
       startDeploy();
+      return;
     }
     if (e.key === 'Enter' || e.key === ' ') {
       briefingDone = true;
       briefingIndex = briefingFullText.length;
+      briefingText = briefingFullText; // Show full text when skipping
     }
+    return;
   }
   if (screen === SCREENS.DEBRIEF && (e.key === 'Enter' || e.key === ' ')) {
     if (typeof CyvlLeaderboard !== 'undefined') {
       CyvlLeaderboard.show('somerville-siege', score);
     }
+    return;
   }
   if (screen === SCREENS.DEBRIEF && e.key.toLowerCase() === 'r') {
     restartGame();
+    return;
   }
   if (screen === SCREENS.GAMEPLAY && e.key.toLowerCase() === 'e') {
     deployDrone();
