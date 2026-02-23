@@ -625,6 +625,16 @@ function processData() {
   // Store city insights
   cityInsights = gameData.insights || {};
 
+  console.log('[SIEGE] processData complete:', {
+    roads: worldRoads.length,
+    signs: worldSigns.length,
+    agas: worldAGAs.length,
+    manholes: totalManholes,
+    trees: totalTrees,
+    striping: worldStriping.length,
+    distresses: worldDistresses.length
+  });
+
   // Build minimap
   buildMinimap();
 
@@ -892,6 +902,7 @@ function startGameplay() {
     player.y = centerRoad.coords[0][1];
   }
 
+  spawnPowerups(); // Spawn powerups immediately at game start
   startNextWave();
 }
 
@@ -1141,15 +1152,23 @@ function deployDrone() {
 // ============================================================
 function signToPowerup(sign) {
   const m = sign.mutcd;
-  if (m === 'R1-1') return 'freeze';
-  if (m === 'R2-1') return 'boost';
-  if (m === 'R5-1') return 'bomb';
-  if (m && m.startsWith('R7')) return 'heal';
-  if (m && m.startsWith('W')) return 'scanner';
-  if (m && m.startsWith('D')) return 'drone';
-  if (m && m.startsWith('R10')) return 'hack';
-  if (m && m.startsWith('R6')) return 'shield';
-  return null;
+  if (!m) return 'heal'; // Unknown signs = heal
+  if (m === 'R1-1') return 'freeze';      // Stop signs
+  if (m === 'R2-1') return 'boost';       // Speed limit
+  if (m.startsWith('R5')) return 'bomb';   // Do not enter
+  if (m.startsWith('R7')) return 'heal';   // Parking/no parking
+  if (m.startsWith('W')) return 'scanner'; // Warning signs
+  if (m.startsWith('D')) return 'drone';   // Guide signs
+  if (m.startsWith('R10')) return 'hack';  // Traffic signal signs
+  if (m.startsWith('R6')) return 'shield'; // One way
+  if (m.startsWith('R1')) return 'freeze'; // Stop/yield
+  if (m.startsWith('R3')) return 'boost';  // Movement
+  if (m.startsWith('R4')) return 'bomb';   // Lane usage
+  if (m.startsWith('R8')) return 'shield'; // Turn prohibitions
+  if (m.startsWith('R12')) return 'hack';  // Weight limit
+  if (m.startsWith('S')) return 'scanner'; // School signs
+  if (m.startsWith('M')) return 'drone';   // Markers
+  return 'heal'; // Catch-all: everything becomes a powerup
 }
 
 function spawnPowerups() {
@@ -1157,7 +1176,7 @@ function spawnPowerups() {
   const shuffled = worldSigns.slice().sort(() => Math.random() - 0.5);
   let spawned = 0;
   for (const sign of shuffled) {
-    if (spawned >= 8) break;
+    if (spawned >= 14) break;
     const ptype = signToPowerup(sign);
     if (!ptype) continue;
     // Don't spawn if one is already near
@@ -1227,66 +1246,80 @@ function resolveSignChallenge(choiceIdx) {
 function applyPowerupEffect(type, mult) {
   switch (type) {
     case 'freeze':
-      player.freezeTime = 4 * mult;
-      for (const e of enemies) e.stunTime = 4 * mult;
-      activePowerups.push({ type: 'FREEZE', time: 4 * mult, color: '#ff2244' });
+      player.freezeTime = 5 * mult;
+      for (const e of enemies) e.stunTime = 5 * mult;
+      shakeCamera(5);
+      spawnParticles(player.x, player.y, '#4444ff', 15, 80, 0.6);
+      activePowerups.push({ type: 'FREEZE ALL', time: 5 * mult, color: '#4488ff' });
       break;
     case 'boost':
-      player.speedBoost = 8 * mult;
-      activePowerups.push({ type: 'SPEED+', time: 8 * mult, color: '#ffffff' });
+      player.speedBoost = 10 * mult;
+      spawnParticles(player.x, player.y, '#ffffff', 10, 60, 0.4);
+      activePowerups.push({ type: 'SPEED x2', time: 10 * mult, color: '#ffffff' });
       break;
     case 'bomb':
       playSound('explosion');
-      shakeCamera(15);
+      shakeCamera(20);
+      let bombKills = 0;
       for (const e of enemies) {
         const dx = e.x - player.x, dy = e.y - player.y;
-        if (Math.sqrt(dx * dx + dy * dy) < 400) {
-          e.hp -= 200 * mult;
+        if (Math.sqrt(dx * dx + dy * dy) < 500) {
+          e.hp -= 250 * mult;
           spawnExplosion(e.x, e.y, e.color);
+          if (e.hp <= 0) bombKills++;
         }
       }
-      activePowerups.push({ type: 'BOMB', time: 0.5, color: '#ff2244' });
+      spawnParticles(player.x, player.y, '#ff4400', 30, 200, 0.8);
+      activePowerups.push({ type: 'BOMB x' + bombKills, time: 1, color: '#ff2244' });
       break;
     case 'heal':
-      player.hp = Math.min(player.maxHp, player.hp + 25 * mult);
-      activePowerups.push({ type: 'HEAL', time: 1, color: '#00ff88' });
+      player.hp = Math.min(player.maxHp, player.hp + 40 * mult);
+      spawnParticles(player.x, player.y, '#00ff88', 12, 50, 0.5);
+      activePowerups.push({ type: 'HEAL +' + Math.round(40 * mult), time: 2, color: '#00ff88' });
       break;
     case 'scanner':
-      player.scanRevealTime = 10 * mult;
-      activePowerups.push({ type: 'SCAN', time: 10 * mult, color: '#ffee00' });
+      player.scanRevealTime = 12 * mult;
+      for (const e of enemies) e.visible = true;
+      spawnParticles(player.x, player.y, '#ffee00', 10, 100, 0.5);
+      activePowerups.push({ type: 'REVEAL ALL', time: 12 * mult, color: '#ffee00' });
       break;
     case 'drone':
       if (drones.length < player.maxDrones) {
         drones.push({
           x: player.x, y: player.y, targetRoad: -1,
-          speed: 150, repairTimer: 0, lifetime: 30 * mult, angle: 0
+          speed: 150, repairTimer: 0, lifetime: 45 * mult, angle: 0
         });
+        spawnParticles(player.x, player.y, '#00bbff', 8, 40, 0.4);
       }
-      activePowerups.push({ type: 'DRONE+', time: 1, color: '#00bbff' });
+      activePowerups.push({ type: 'DRONE UP', time: 2, color: '#00bbff' });
       break;
     case 'hack':
-      // Auto-seal manholes within 500px
+      // Auto-seal manholes within 600px
       let hackCount = 0;
       for (const a of worldAGAs) {
-        if (a.type === 'M' && !a.sealed && dist(player.x, player.y, a.x, a.y) < 500) {
-          a.sealed = true; sealedManholes++; hackCount++;
-          spawnParticles(a.x, a.y, '#00ff88', 8, 60, 0.5);
+        if (a.type === 'M' && !a.sealed && dist(player.x, player.y, a.x, a.y) < 600) {
+          a.sealed = true; a.active = false; sealedManholes++; hackCount++;
+          spawnParticles(a.x, a.y, '#00ff88', 12, 80, 0.6);
         }
       }
-      // Restore striping condition within 500px
+      // Restore striping condition within 600px
+      let stripFixed = 0;
       for (const s of worldStriping) {
         const sx = s.isLine ? s.coords[0][0] : s.x;
         const sy = s.isLine ? s.coords[0][1] : s.y;
-        if (dist(player.x, player.y, sx, sy) < 500 && s.faded) {
-          s.faded = false; s.cond = 'G'; goodStriping++;
+        if (dist(player.x, player.y, sx, sy) < 600 && s.faded) {
+          s.faded = false; s.cond = 'G'; goodStriping++; stripFixed++;
         }
       }
-      shakeCamera(8);
-      activePowerups.push({ type: 'HACK', time: 2, color: '#00ffaa' });
+      shakeCamera(12);
+      spawnParticles(player.x, player.y, '#00ffaa', 20, 120, 0.7);
+      activePowerups.push({ type: 'HACK: ' + hackCount + 'MH', time: 3, color: '#00ffaa' });
       break;
     case 'shield':
-      player.shieldTime = 5 * mult;
-      activePowerups.push({ type: 'SHIELD', time: 5 * mult, color: '#ffee00' });
+      player.shieldTime = 8 * mult;
+      shakeCamera(3);
+      spawnParticles(player.x, player.y, '#00eeff', 15, 60, 0.5);
+      activePowerups.push({ type: 'SHIELD', time: 8 * mult, color: '#00eeff' });
       break;
   }
 }
@@ -1516,7 +1549,7 @@ function updateGameplay(dt) {
 
   // Update powerups
   powerupTimer += dt;
-  if (powerupTimer >= 30) {
+  if (powerupTimer >= 12) {
     powerupTimer = 0;
     spawnPowerups();
   }
@@ -1539,7 +1572,9 @@ function updateGameplay(dt) {
 
   // Update sign challenge
   if (signChallengeActive && signChallenge) {
-    signChallenge.timer -= dt * 0.2; // Timer in real time during bullet-time
+    // dt is already 0.2x during challenge, so multiply by 5 to get real-time speed for the timer
+    const timerDt = signChallenge.result ? dt : dt * 5;
+    signChallenge.timer -= timerDt;
     if (signChallenge.result && signChallenge.timer <= 0) {
       signChallenge = null; signChallengeActive = false;
     } else if (!signChallenge.result && signChallenge.timer <= 0) {
@@ -3025,10 +3060,18 @@ function drawPowerups() {
     ctx.save();
     ctx.translate(sx, sy + bob);
 
+    // Outer pulse ring
+    ctx.strokeStyle = `rgba(255, 238, 0, ${glowAlpha * 0.5})`;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(0, 0, 16 + Math.sin(gameTime * 5 + p.bobOffset) * 4, 0, Math.PI * 2);
+    ctx.stroke();
+
     // Glow
-    const glowSize = 20;
+    const glowSize = 28;
     const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, glowSize);
-    glow.addColorStop(0, `rgba(255, 255, 255, ${glowAlpha * 0.4})`);
+    glow.addColorStop(0, `rgba(255, 255, 255, ${glowAlpha * 0.6})`);
+    glow.addColorStop(0.5, `rgba(255, 238, 0, ${glowAlpha * 0.2})`);
     glow.addColorStop(1, 'rgba(255, 255, 255, 0)');
     ctx.fillStyle = glow;
     ctx.beginPath();
@@ -3107,7 +3150,49 @@ function drawPowerups() {
         ctx.textBaseline = 'middle';
         ctx.fillText('D', 0, 1);
         break;
+      case 'hack':
+        // Green hexagon
+        ctx.fillStyle = '#00ffaa';
+        ctx.beginPath();
+        for (let i = 0; i < 6; i++) {
+          const ang = (i / 6) * Math.PI * 2;
+          ctx.lineTo(Math.cos(ang) * 10, Math.sin(ang) * 10);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#000';
+        ctx.font = 'bold 8px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('H', 0, 1);
+        break;
+      case 'shield':
+        // Cyan shield shape
+        ctx.fillStyle = '#00eeff';
+        ctx.beginPath();
+        ctx.moveTo(0, -11);
+        ctx.lineTo(9, -5);
+        ctx.lineTo(9, 4);
+        ctx.lineTo(0, 11);
+        ctx.lineTo(-9, 4);
+        ctx.lineTo(-9, -5);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#000';
+        ctx.font = 'bold 9px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('S', 0, 0);
+        break;
     }
+
+    // Label below powerup
+    ctx.fillStyle = '#ffffff88';
+    ctx.font = '7px "Courier New", monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    const typeLabels = { freeze:'FREEZE', boost:'SPEED', bomb:'BOMB', heal:'HEAL', scanner:'SCAN', drone:'DRONE', hack:'HACK', shield:'SHIELD' };
+    ctx.fillText(typeLabels[p.type] || p.type, 0, 14);
 
     ctx.restore();
   }
@@ -3655,6 +3740,32 @@ function drawMinimap() {
     const epy = my + (e.y / WORLD_H) * mh;
     ctx.fillStyle = e.type === 'boss' ? '#ff2244' : '#ff6600';
     ctx.fillRect(epx - 1, epy - 1, 2, 2);
+  }
+
+  // Manhole dots on minimap
+  for (const a of worldAGAs) {
+    if (a.type !== 'M') continue;
+    const ax = mx + (a.x / WORLD_W) * mw;
+    const ay = my + (a.y / WORLD_H) * mh;
+    ctx.fillStyle = a.sealed ? '#00ff8888' : (a.active ? '#ff224488' : '#88888844');
+    ctx.fillRect(ax - 1, ay - 1, 2, 2);
+  }
+
+  // Tree dots on minimap
+  for (const a of worldAGAs) {
+    if (a.type !== 'T') continue;
+    const ax = mx + (a.x / WORLD_W) * mw;
+    const ay = my + (a.y / WORLD_H) * mh;
+    ctx.fillStyle = a.liberated ? '#44ff4488' : '#22662244';
+    ctx.fillRect(ax, ay, 1, 1);
+  }
+
+  // Powerup dots on minimap
+  for (const p of powerups) {
+    const px = mx + (p.x / WORLD_W) * mw;
+    const py = my + (p.y / WORLD_H) * mh;
+    ctx.fillStyle = '#ffee00';
+    ctx.fillRect(px - 1, py - 1, 3, 3);
   }
 
   // Radar sweep on minimap
