@@ -613,7 +613,7 @@ function update(dt) {
         playSound('gameOver');
         if (!scoreSubmitted) {
           scoreSubmitted = true;
-          if (window.submitScore) window.submitScore('infra-frogger', score);
+          if (typeof CyvlLeaderboard !== 'undefined') CyvlLeaderboard.show('infra-frogger', score);
         }
       } else {
         resetPlayer();
@@ -634,7 +634,7 @@ function update(dt) {
         playSound('gameOver');
         if (!scoreSubmitted) {
           scoreSubmitted = true;
-          if (window.submitScore) window.submitScore('infra-frogger', score);
+          if (typeof CyvlLeaderboard !== 'undefined') CyvlLeaderboard.show('infra-frogger', score);
         }
       } else {
         initLevel();

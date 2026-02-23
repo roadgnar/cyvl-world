@@ -1313,7 +1313,7 @@ function nextLevel() {
 function endGame() {
   gameState = STATE.GAME_OVER;
   playSound('gameOver');
-  if (window.submitScore) window.submitScore('budget-brawl', score);
+  if (typeof CyvlLeaderboard !== 'undefined') CyvlLeaderboard.show('budget-brawl', score);
 }
 
 function getGrade(s) {
