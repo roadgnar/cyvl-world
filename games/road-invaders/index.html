@@ -1,0 +1,1136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ROAD INVADERS</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #0a0a1a;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  overflow: hidden;
+}
+canvas {
+  display: block;
+  image-rendering: pixelated;
+  border: 1px solid #00e5ff33;
+  box-shadow: 0 0 30px #00e5ff22, inset 0 0 30px #00e5ff08;
+}
+</style>
+</head>
+<body>
+<script src="/shared/arcade-nav.js"></script>
+<canvas id="game"></canvas>
+<script>
+// ============================================================
+// ROAD INVADERS — Infrastructure-Themed Space Invaders Clone
+// ============================================================
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+// Canvas sizing
+const W = 800;
+const H = 600;
+canvas.width = W;
+canvas.height = H;
+
+// Colors
+const COL = {
+  bg: '#0a0a1a',
+  cyan: '#00e5ff',
+  green: '#00ff88',
+  orange: '#ff6600',
+  purple: '#aa44ff',
+  red: '#ff2244',
+  brown: '#884422',
+  gold: '#ffd700',
+  white: '#ffffff',
+  dimWhite: '#aaaacc',
+  darkCyan: '#005566',
+};
+
+// ============================================================
+// WEB AUDIO — Sound Effects
+// ============================================================
+let audioCtx = null;
+function ensureAudio() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+}
+
+function playSound(type) {
+  ensureAudio();
+  const now = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+
+  switch (type) {
+    case 'shoot':
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(880, now);
+      osc.frequency.exponentialRampToValueAtTime(220, now + 0.1);
+      gain.gain.setValueAtTime(0.12, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+      osc.start(now);
+      osc.stop(now + 0.1);
+      break;
+    case 'enemyHit':
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(440, now);
+      osc.frequency.exponentialRampToValueAtTime(110, now + 0.15);
+      gain.gain.setValueAtTime(0.15, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+      osc.start(now);
+      osc.stop(now + 0.15);
+      break;
+    case 'explosion':
+      // Noise-like explosion via rapid frequency modulation
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(200, now);
+      osc.frequency.exponentialRampToValueAtTime(30, now + 0.35);
+      gain.gain.setValueAtTime(0.18, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+      osc.start(now);
+      osc.stop(now + 0.35);
+      break;
+    case 'playerHit':
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(150, now);
+      osc.frequency.exponentialRampToValueAtTime(40, now + 0.5);
+      gain.gain.setValueAtTime(0.2, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+      osc.start(now);
+      osc.stop(now + 0.5);
+      // Second tone for drama
+      const osc2 = audioCtx.createOscillator();
+      const gain2 = audioCtx.createGain();
+      osc2.connect(gain2);
+      gain2.connect(audioCtx.destination);
+      osc2.type = 'square';
+      osc2.frequency.setValueAtTime(100, now);
+      osc2.frequency.exponentialRampToValueAtTime(20, now + 0.6);
+      gain2.gain.setValueAtTime(0.15, now);
+      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
+      osc2.start(now);
+      osc2.stop(now + 0.6);
+      break;
+    case 'bonus':
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(600, now);
+      osc.frequency.setValueAtTime(800, now + 0.05);
+      osc.frequency.setValueAtTime(1000, now + 0.1);
+      osc.frequency.setValueAtTime(1200, now + 0.15);
+      gain.gain.setValueAtTime(0.12, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+      osc.start(now);
+      osc.stop(now + 0.25);
+      break;
+    case 'waveComplete':
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(440, now);
+      osc.frequency.setValueAtTime(554, now + 0.12);
+      osc.frequency.setValueAtTime(659, now + 0.24);
+      osc.frequency.setValueAtTime(880, now + 0.36);
+      gain.gain.setValueAtTime(0.15, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+      osc.start(now);
+      osc.stop(now + 0.5);
+      break;
+  }
+}
+
+// ============================================================
+// INPUT
+// ============================================================
+const keys = {};
+window.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (['Space', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.code)) {
+    e.preventDefault();
+  }
+});
+window.addEventListener('keyup', e => { keys[e.code] = false; });
+
+// ============================================================
+// GAME STATE
+// ============================================================
+let state = 'title'; // title | playing | gameover | waveTransition
+let score = 0;
+let highScore = parseInt(localStorage.getItem('roadInvadersHigh') || '0');
+let lives = 3;
+let wave = 1;
+let waveTransTimer = 0;
+
+// Player
+const player = {
+  x: W / 2,
+  y: H - 60,
+  w: 48,
+  h: 32,
+  speed: 280,
+  alive: true,
+  respawnTimer: 0,
+  blinkTimer: 0,
+  shootCooldown: 0,
+};
+
+// Bullets
+let playerBullets = [];
+let enemyBullets = [];
+
+// Enemies
+let enemies = [];
+let enemyDir = 1; // 1 = right, -1 = left
+let enemyMoveTimer = 0;
+let enemyMoveInterval = 0.9; // seconds between moves — slow for EASY
+let enemyStepDown = false;
+let enemyShootTimer = 0;
+let enemySpeed = 12; // pixels per move step
+
+// Shields / Barriers
+let shields = [];
+
+// Bonus inspector
+let inspector = null;
+let inspectorTimer = 0;
+
+// Particles
+let particles = [];
+
+// Score popups
+let scorePopups = [];
+
+// ============================================================
+// PIXEL ART DRAWING HELPERS
+// ============================================================
+
+function drawPixelGrid(cx, cy, grid, pixelSize, color) {
+  ctx.fillStyle = color;
+  const rows = grid.length;
+  const cols = grid[0].length;
+  const startX = cx - (cols * pixelSize) / 2;
+  const startY = cy - (rows * pixelSize) / 2;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      if (grid[r][c]) {
+        ctx.fillRect(
+          Math.floor(startX + c * pixelSize),
+          Math.floor(startY + r * pixelSize),
+          pixelSize, pixelSize
+        );
+      }
+    }
+  }
+}
+
+function drawPixelGridMultiColor(cx, cy, grid, pixelSize, colorMap) {
+  const rows = grid.length;
+  const cols = grid[0].length;
+  const startX = cx - (cols * pixelSize) / 2;
+  const startY = cy - (rows * pixelSize) / 2;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const val = grid[r][c];
+      if (val && colorMap[val]) {
+        ctx.fillStyle = colorMap[val];
+        ctx.fillRect(
+          Math.floor(startX + c * pixelSize),
+          Math.floor(startY + r * pixelSize),
+          pixelSize, pixelSize
+        );
+      }
+    }
+  }
+}
+
+// ============================================================
+// SPRITE DEFINITIONS (pixel grids)
+// ============================================================
+
+// Road Paver / Truck (orange body, cyan highlights)
+const PAVER_GRID = [
+  [0,0,0,0,0,2,2,0,0,0,0,0],
+  [0,0,0,2,2,2,2,2,2,0,0,0],
+  [0,0,2,2,2,2,2,2,2,2,0,0],
+  [0,1,1,1,1,1,1,1,1,1,1,0],
+  [0,1,1,2,1,1,1,1,2,1,1,0],
+  [1,1,1,1,1,1,1,1,1,1,1,1],
+  [1,1,1,1,1,1,1,1,1,1,1,1],
+  [0,1,0,1,1,1,1,1,1,0,1,0],
+];
+const PAVER_COLORS = { 1: COL.orange, 2: COL.cyan };
+
+// RFP Form (purple document shape)
+const RFP_GRID = [
+  [0,1,1,1,1,1,1,0],
+  [1,1,1,1,1,1,1,1],
+  [1,0,0,1,1,0,0,1],
+  [1,1,1,1,1,1,1,1],
+  [1,0,1,0,0,1,0,1],
+  [1,1,1,1,1,1,1,1],
+  [0,1,1,1,1,1,1,0],
+];
+
+// Traffic Cone
+const CONE_GRID = [
+  [0,0,0,1,1,0,0,0],
+  [0,0,1,1,1,1,0,0],
+  [0,0,1,2,2,1,0,0],
+  [0,1,1,1,1,1,1,0],
+  [0,1,2,2,2,2,1,0],
+  [1,1,1,1,1,1,1,1],
+  [1,1,1,1,1,1,1,1],
+];
+const CONE_COLORS = { 1: COL.orange, 2: '#ffffff' };
+
+// Pothole (brown/red rough circle)
+const POTHOLE_GRID = [
+  [0,0,1,1,1,1,0,0],
+  [0,1,2,2,2,2,1,0],
+  [1,2,1,2,2,1,2,1],
+  [1,2,2,1,1,2,2,1],
+  [1,2,2,1,1,2,2,1],
+  [1,2,1,2,2,1,2,1],
+  [0,1,2,2,2,2,1,0],
+  [0,0,1,1,1,1,0,0],
+];
+const POTHOLE_COLORS = { 1: COL.brown, 2: COL.red };
+
+// Inspector (gold diamond-ish shape)
+const INSPECTOR_GRID = [
+  [0,0,0,1,1,1,0,0,0],
+  [0,0,1,2,2,2,1,0,0],
+  [0,1,2,2,2,2,2,1,0],
+  [1,2,2,1,1,1,2,2,1],
+  [0,1,2,2,2,2,2,1,0],
+  [0,0,1,2,2,2,1,0,0],
+  [0,0,0,1,1,1,0,0,0],
+];
+const INSPECTOR_COLORS = { 1: '#aa8800', 2: COL.gold };
+
+// ============================================================
+// SHIELD / BARRIER
+// ============================================================
+
+function createShields() {
+  shields = [];
+  const shieldW = 56;
+  const shieldH = 40;
+  const positions = [140, 300, 500, 660];
+  const pixSize = 4;
+  const cols = Math.floor(shieldW / pixSize);
+  const rows = Math.floor(shieldH / pixSize);
+
+  for (const sx of positions) {
+    const pixels = [];
+    for (let r = 0; r < rows; r++) {
+      pixels[r] = [];
+      for (let c = 0; c < cols; c++) {
+        // Arch shape
+        const cx = cols / 2;
+        const cy = rows;
+        const dx = (c - cx) / cx;
+        const dy = (r - cy) / (rows * 0.8);
+        const inArch = r > rows * 0.55 && Math.abs(c - cx) < cols * 0.25;
+        pixels[r][c] = inArch ? 0 : 1;
+      }
+    }
+    shields.push({ x: sx - shieldW / 2, y: H - 120, w: shieldW, h: shieldH, pixels, pixSize, cols, rows });
+  }
+}
+
+function drawShield(s) {
+  for (let r = 0; r < s.rows; r++) {
+    for (let c = 0; c < s.cols; c++) {
+      if (s.pixels[r][c]) {
+        ctx.fillStyle = COL.green;
+        ctx.fillRect(
+          Math.floor(s.x + c * s.pixSize),
+          Math.floor(s.y + r * s.pixSize),
+          s.pixSize, s.pixSize
+        );
+      }
+    }
+  }
+}
+
+function damageShield(s, bx, by, radius) {
+  let hit = false;
+  for (let r = 0; r < s.rows; r++) {
+    for (let c = 0; c < s.cols; c++) {
+      if (s.pixels[r][c]) {
+        const px = s.x + c * s.pixSize + s.pixSize / 2;
+        const py = s.y + r * s.pixSize + s.pixSize / 2;
+        const dx = px - bx;
+        const dy = py - by;
+        if (dx * dx + dy * dy < radius * radius) {
+          s.pixels[r][c] = 0;
+          hit = true;
+        }
+      }
+    }
+  }
+  return hit;
+}
+
+// ============================================================
+// ENEMY SETUP
+// ============================================================
+
+function createEnemies() {
+  enemies = [];
+  enemyDir = 1;
+  enemyMoveTimer = 0;
+  enemyStepDown = false;
+
+  // Difficulty scaling
+  const speedMult = 1 + (wave - 1) * 0.08;
+  enemyMoveInterval = Math.max(0.25, 0.9 - (wave - 1) * 0.06);
+  enemySpeed = Math.min(20, 12 + (wave - 1) * 1);
+
+  const startX = 80;
+  const startY = 70;
+  const gapX = 58;
+  const gapY = 44;
+  const cols = 11;
+
+  // Row types: 0=RFP(top), 1-2=Cone, 3-4=Pothole(bottom)
+  const rowTypes = [
+    { type: 'rfp', points: 10, color: COL.purple, grid: RFP_GRID, colorMap: null },
+    { type: 'cone', points: 20, color: null, grid: CONE_GRID, colorMap: CONE_COLORS },
+    { type: 'cone', points: 20, color: null, grid: CONE_GRID, colorMap: CONE_COLORS },
+    { type: 'pothole', points: 30, color: null, grid: POTHOLE_GRID, colorMap: POTHOLE_COLORS },
+    { type: 'pothole', points: 30, color: null, grid: POTHOLE_GRID, colorMap: POTHOLE_COLORS },
+  ];
+
+  for (let row = 0; row < 5; row++) {
+    for (let col = 0; col < cols; col++) {
+      const rt = rowTypes[row];
+      enemies.push({
+        x: startX + col * gapX,
+        y: startY + row * gapY,
+        w: 32,
+        h: 28,
+        alive: true,
+        type: rt.type,
+        points: rt.points,
+        color: rt.color,
+        grid: rt.grid,
+        colorMap: rt.colorMap,
+        animFrame: 0,
+      });
+    }
+  }
+}
+
+// ============================================================
+// PARTICLES
+// ============================================================
+
+function spawnExplosion(x, y, color, count) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 40 + Math.random() * 120;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: 0.4 + Math.random() * 0.4,
+      maxLife: 0.4 + Math.random() * 0.4,
+      color: color,
+      size: 2 + Math.random() * 3,
+    });
+  }
+}
+
+function spawnScorePopup(x, y, text) {
+  scorePopups.push({ x, y, text, life: 1.0 });
+}
+
+// ============================================================
+// GAME INIT
+// ============================================================
+
+function resetGame() {
+  score = 0;
+  lives = 3;
+  wave = 1;
+  player.x = W / 2;
+  player.alive = true;
+  player.respawnTimer = 0;
+  player.blinkTimer = 0;
+  player.shootCooldown = 0;
+  playerBullets = [];
+  enemyBullets = [];
+  particles = [];
+  scorePopups = [];
+  inspector = null;
+  inspectorTimer = 8 + Math.random() * 10;
+  createShields();
+  createEnemies();
+}
+
+function startNextWave() {
+  wave++;
+  playerBullets = [];
+  enemyBullets = [];
+  inspector = null;
+  inspectorTimer = 8 + Math.random() * 10;
+  createEnemies();
+  // Keep shields damaged from previous wave
+}
+
+// ============================================================
+// UPDATE FUNCTIONS
+// ============================================================
+
+function updatePlayer(dt) {
+  if (player.respawnTimer > 0) {
+    player.respawnTimer -= dt;
+    player.blinkTimer += dt;
+    if (player.respawnTimer <= 0) {
+      player.alive = true;
+      player.blinkTimer = 0;
+    }
+    return;
+  }
+
+  if (!player.alive) return;
+
+  // Movement
+  let dx = 0;
+  if (keys['ArrowLeft'] || keys['KeyA']) dx = -1;
+  if (keys['ArrowRight'] || keys['KeyD']) dx = 1;
+  player.x += dx * player.speed * dt;
+  player.x = Math.max(player.w / 2 + 10, Math.min(W - player.w / 2 - 10, player.x));
+
+  // Shooting
+  player.shootCooldown -= dt;
+  if (keys['Space'] && player.shootCooldown <= 0) {
+    playerBullets.push({
+      x: player.x,
+      y: player.y - player.h / 2 - 4,
+      vy: -360,
+      w: 4,
+      h: 12,
+    });
+    player.shootCooldown = 0.3;
+    playSound('shoot');
+  }
+}
+
+function updatePlayerBullets(dt) {
+  for (let i = playerBullets.length - 1; i >= 0; i--) {
+    const b = playerBullets[i];
+    b.y += b.vy * dt;
+    if (b.y < -10) {
+      playerBullets.splice(i, 1);
+      continue;
+    }
+
+    // Check vs enemies
+    let hitEnemy = false;
+    for (const e of enemies) {
+      if (!e.alive) continue;
+      if (Math.abs(b.x - e.x) < (b.w / 2 + e.w / 2 + 4) &&
+          Math.abs(b.y - e.y) < (b.h / 2 + e.h / 2 + 4)) {
+        e.alive = false;
+        score += e.points;
+        hitEnemy = true;
+        const expColor = e.color || (e.type === 'cone' ? COL.orange : COL.red);
+        spawnExplosion(e.x, e.y, expColor, 12);
+        spawnScorePopup(e.x, e.y - 16, '+' + e.points);
+        playSound('enemyHit');
+        break;
+      }
+    }
+    if (hitEnemy) {
+      playerBullets.splice(i, 1);
+      continue;
+    }
+
+    // Check vs inspector
+    if (inspector) {
+      if (Math.abs(b.x - inspector.x) < (b.w / 2 + inspector.w / 2 + 4) &&
+          Math.abs(b.y - inspector.y) < (b.h / 2 + inspector.h / 2 + 4)) {
+        score += 100;
+        spawnExplosion(inspector.x, inspector.y, COL.gold, 20);
+        spawnScorePopup(inspector.x, inspector.y - 16, '+100');
+        playSound('bonus');
+        inspector = null;
+        playerBullets.splice(i, 1);
+        continue;
+      }
+    }
+
+    // Check vs shields
+    let hitShield = false;
+    for (const s of shields) {
+      if (b.x > s.x && b.x < s.x + s.w && b.y > s.y && b.y < s.y + s.h) {
+        if (damageShield(s, b.x, b.y, 8)) {
+          hitShield = true;
+          break;
+        }
+      }
+    }
+    if (hitShield) {
+      playerBullets.splice(i, 1);
+    }
+  }
+}
+
+function updateEnemies(dt) {
+  // Count alive
+  const aliveEnemies = enemies.filter(e => e.alive);
+  if (aliveEnemies.length === 0) {
+    // Wave cleared
+    state = 'waveTransition';
+    waveTransTimer = 2.0;
+    playSound('waveComplete');
+    return;
+  }
+
+  // Speed up as fewer enemies remain
+  const ratio = aliveEnemies.length / enemies.length;
+  const currentInterval = enemyMoveInterval * Math.max(0.3, ratio);
+
+  enemyMoveTimer += dt;
+  if (enemyMoveTimer >= currentInterval) {
+    enemyMoveTimer = 0;
+
+    if (enemyStepDown) {
+      for (const e of enemies) {
+        if (e.alive) e.y += 16;
+      }
+      enemyStepDown = false;
+      // Check if enemies reached player level
+      for (const e of enemies) {
+        if (e.alive && e.y > H - 90) {
+          // Game over — enemies reached bottom
+          state = 'gameover';
+          if (score > highScore) {
+            highScore = score;
+            localStorage.setItem('roadInvadersHigh', highScore.toString());
+          }
+          return;
+        }
+      }
+    } else {
+      // Move sideways
+      let needReverse = false;
+      for (const e of enemies) {
+        if (!e.alive) continue;
+        if (enemyDir > 0 && e.x + enemySpeed > W - 30) needReverse = true;
+        if (enemyDir < 0 && e.x - enemySpeed < 30) needReverse = true;
+      }
+
+      if (needReverse) {
+        enemyDir *= -1;
+        enemyStepDown = true;
+      } else {
+        for (const e of enemies) {
+          if (e.alive) {
+            e.x += enemyDir * enemySpeed;
+            e.animFrame = (e.animFrame + 1) % 2;
+          }
+        }
+      }
+    }
+  }
+
+  // Enemy shooting — generous timing (EASY)
+  enemyShootTimer += dt;
+  const shootInterval = Math.max(0.8, 2.0 - (wave - 1) * 0.1);
+  if (enemyShootTimer >= shootInterval) {
+    enemyShootTimer = 0;
+    // Pick a random alive enemy from the bottom of each column
+    const bottomEnemies = [];
+    const colMap = {};
+    for (const e of enemies) {
+      if (!e.alive) continue;
+      const colKey = Math.round(e.x / 10);
+      if (!colMap[colKey] || e.y > colMap[colKey].y) {
+        colMap[colKey] = e;
+      }
+    }
+    for (const k of Object.keys(colMap)) bottomEnemies.push(colMap[k]);
+
+    if (bottomEnemies.length > 0) {
+      const shooter = bottomEnemies[Math.floor(Math.random() * bottomEnemies.length)];
+      enemyBullets.push({
+        x: shooter.x,
+        y: shooter.y + 14,
+        vy: 140 + wave * 8, // slow projectiles for EASY
+        w: 4,
+        h: 10,
+      });
+    }
+  }
+}
+
+function updateEnemyBullets(dt) {
+  for (let i = enemyBullets.length - 1; i >= 0; i--) {
+    const b = enemyBullets[i];
+    b.y += b.vy * dt;
+    if (b.y > H + 10) {
+      enemyBullets.splice(i, 1);
+      continue;
+    }
+
+    // Check vs player (generous hitbox)
+    if (player.alive && player.respawnTimer <= 0) {
+      if (Math.abs(b.x - player.x) < (player.w / 2 + 2) &&
+          Math.abs(b.y - player.y) < (player.h / 2 + 2)) {
+        playerHit();
+        enemyBullets.splice(i, 1);
+        continue;
+      }
+    }
+
+    // Check vs shields
+    let hitShield = false;
+    for (const s of shields) {
+      if (b.x > s.x && b.x < s.x + s.w && b.y > s.y && b.y < s.y + s.h) {
+        if (damageShield(s, b.x, b.y, 8)) {
+          hitShield = true;
+          break;
+        }
+      }
+    }
+    if (hitShield) {
+      enemyBullets.splice(i, 1);
+    }
+  }
+}
+
+function playerHit() {
+  lives--;
+  player.alive = false;
+  spawnExplosion(player.x, player.y, COL.orange, 25);
+  playSound('playerHit');
+
+  if (lives <= 0) {
+    state = 'gameover';
+    if (score > highScore) {
+      highScore = score;
+      localStorage.setItem('roadInvadersHigh', highScore.toString());
+    }
+  } else {
+    player.respawnTimer = 2.0;
+    player.x = W / 2;
+  }
+}
+
+function updateInspector(dt) {
+  if (inspector) {
+    inspector.x += inspector.vx * dt;
+    if (inspector.x < -60 || inspector.x > W + 60) {
+      inspector = null;
+    }
+  } else {
+    inspectorTimer -= dt;
+    if (inspectorTimer <= 0) {
+      const fromLeft = Math.random() < 0.5;
+      inspector = {
+        x: fromLeft ? -40 : W + 40,
+        y: 35,
+        vx: fromLeft ? 100 : -100,
+        w: 36,
+        h: 28,
+      };
+      inspectorTimer = 15 + Math.random() * 15;
+    }
+  }
+}
+
+function updateParticles(dt) {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.vy += 200 * dt; // gravity
+    p.life -= dt;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+}
+
+function updateScorePopups(dt) {
+  for (let i = scorePopups.length - 1; i >= 0; i--) {
+    const p = scorePopups[i];
+    p.y -= 40 * dt;
+    p.life -= dt;
+    if (p.life <= 0) scorePopups.splice(i, 1);
+  }
+}
+
+// ============================================================
+// DRAW FUNCTIONS
+// ============================================================
+
+function drawBackground() {
+  ctx.fillStyle = COL.bg;
+  ctx.fillRect(0, 0, W, H);
+
+  // Faint grid lines for road feel
+  ctx.strokeStyle = '#111122';
+  ctx.lineWidth = 1;
+  for (let x = 0; x < W; x += 40) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, H);
+    ctx.stroke();
+  }
+  for (let y = 0; y < H; y += 40) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(W, y);
+    ctx.stroke();
+  }
+
+  // Bottom road surface
+  ctx.fillStyle = '#0e0e20';
+  ctx.fillRect(0, H - 70, W, 70);
+  // Lane dashes
+  ctx.fillStyle = '#1a1a30';
+  for (let x = 0; x < W; x += 50) {
+    ctx.fillRect(x, H - 42, 30, 3);
+  }
+}
+
+function drawHUD() {
+  // Score
+  ctx.fillStyle = COL.cyan;
+  ctx.font = '16px "Courier New", monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('SCORE: ' + score.toString().padStart(6, '0'), 16, 24);
+
+  // High Score
+  ctx.textAlign = 'center';
+  ctx.fillStyle = COL.dimWhite;
+  ctx.fillText('HIGH: ' + Math.max(score, highScore).toString().padStart(6, '0'), W / 2, 24);
+
+  // Wave
+  ctx.textAlign = 'right';
+  ctx.fillStyle = COL.green;
+  ctx.fillText('WAVE: ' + wave, W - 16, 24);
+
+  // Lives
+  ctx.textAlign = 'left';
+  ctx.fillStyle = COL.orange;
+  for (let i = 0; i < lives; i++) {
+    const lx = 20 + i * 28;
+    const ly = H - 16;
+    // Mini paver icon
+    ctx.fillRect(lx - 8, ly - 5, 16, 10);
+    ctx.fillStyle = COL.cyan;
+    ctx.fillRect(lx - 3, ly - 8, 6, 4);
+    ctx.fillStyle = COL.orange;
+  }
+}
+
+function drawPlayer() {
+  if (!player.alive && player.respawnTimer > 0) {
+    // Blinking during respawn
+    if (Math.floor(player.blinkTimer * 8) % 2 === 0) return;
+  }
+  if (!player.alive && player.respawnTimer <= 0 && lives <= 0) return;
+
+  const ps = 4; // pixel size for paver
+  drawPixelGridMultiColor(player.x, player.y, PAVER_GRID, ps, PAVER_COLORS);
+}
+
+function drawEnemies() {
+  for (const e of enemies) {
+    if (!e.alive) continue;
+    const ps = 4;
+    if (e.colorMap) {
+      drawPixelGridMultiColor(e.x, e.y, e.grid, ps, e.colorMap);
+    } else {
+      drawPixelGrid(e.x, e.y, e.grid, ps, e.color);
+    }
+  }
+}
+
+function drawInspector() {
+  if (!inspector) return;
+  drawPixelGridMultiColor(inspector.x, inspector.y, INSPECTOR_GRID, 4, INSPECTOR_COLORS);
+  // Label
+  ctx.fillStyle = COL.gold;
+  ctx.font = '10px "Courier New", monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('INSPECTOR', inspector.x, inspector.y - 18);
+}
+
+function drawPlayerBullets() {
+  ctx.fillStyle = COL.cyan;
+  ctx.shadowColor = COL.cyan;
+  ctx.shadowBlur = 8;
+  for (const b of playerBullets) {
+    ctx.fillRect(b.x - b.w / 2, b.y - b.h / 2, b.w, b.h);
+  }
+  ctx.shadowBlur = 0;
+}
+
+function drawEnemyBullets() {
+  ctx.fillStyle = COL.red;
+  ctx.shadowColor = COL.red;
+  ctx.shadowBlur = 6;
+  for (const b of enemyBullets) {
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.shadowBlur = 0;
+}
+
+function drawParticles() {
+  for (const p of particles) {
+    const alpha = Math.max(0, p.life / p.maxLife);
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawScorePopups() {
+  for (const p of scorePopups) {
+    const alpha = Math.max(0, p.life);
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = COL.green;
+    ctx.font = 'bold 14px "Courier New", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(p.text, p.x, p.y);
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ============================================================
+// TITLE SCREEN
+// ============================================================
+
+let titleFlash = 0;
+
+function drawTitleScreen(dt) {
+  titleFlash += dt;
+
+  drawBackground();
+
+  // Title glow
+  ctx.save();
+  ctx.shadowColor = COL.cyan;
+  ctx.shadowBlur = 20;
+  ctx.fillStyle = COL.cyan;
+  ctx.font = 'bold 52px "Courier New", monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('ROAD INVADERS', W / 2, 160);
+  ctx.restore();
+
+  // Subtitle
+  ctx.fillStyle = COL.orange;
+  ctx.font = '18px "Courier New", monospace';
+  ctx.fillText('INFRASTRUCTURE DEFENSE PROTOCOL', W / 2, 200);
+
+  // Enemy legend
+  const legendY = 260;
+  const ps = 3;
+
+  ctx.fillStyle = COL.purple;
+  ctx.font = '14px "Courier New", monospace';
+  ctx.textAlign = 'left';
+  drawPixelGrid(200, legendY, RFP_GRID, ps, COL.purple);
+  ctx.fillStyle = COL.dimWhite;
+  ctx.fillText('= RFP FORM ......... 10 PTS', 240, legendY + 5);
+
+  drawPixelGridMultiColor(200, legendY + 44, CONE_GRID, ps, CONE_COLORS);
+  ctx.fillStyle = COL.dimWhite;
+  ctx.fillText('= TRAFFIC CONE ..... 20 PTS', 240, legendY + 49);
+
+  drawPixelGridMultiColor(200, legendY + 88, POTHOLE_GRID, ps, POTHOLE_COLORS);
+  ctx.fillStyle = COL.dimWhite;
+  ctx.fillText('= POTHOLE .......... 30 PTS', 240, legendY + 93);
+
+  drawPixelGridMultiColor(200, legendY + 132, INSPECTOR_GRID, ps, INSPECTOR_COLORS);
+  ctx.fillStyle = COL.dimWhite;
+  ctx.fillText('= INSPECTOR ........ 100 PTS', 240, legendY + 137);
+
+  // Controls
+  ctx.fillStyle = COL.green;
+  ctx.font = '14px "Courier New", monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('ARROWS / A,D = MOVE    SPACE = FIRE', W / 2, 470);
+
+  // Flash "PRESS ENTER"
+  if (Math.floor(titleFlash * 2) % 2 === 0) {
+    ctx.fillStyle = COL.cyan;
+    ctx.font = 'bold 22px "Courier New", monospace';
+    ctx.fillText('PRESS ENTER TO START', W / 2, 530);
+  }
+
+  // High score
+  if (highScore > 0) {
+    ctx.fillStyle = COL.gold;
+    ctx.font = '14px "Courier New", monospace';
+    ctx.fillText('HIGH SCORE: ' + highScore, W / 2, 570);
+  }
+}
+
+// ============================================================
+// GAME OVER SCREEN
+// ============================================================
+
+let gameoverTimer = 0;
+
+function drawGameOverScreen(dt) {
+  gameoverTimer += dt;
+
+  drawBackground();
+
+  ctx.save();
+  ctx.shadowColor = COL.red;
+  ctx.shadowBlur = 20;
+  ctx.fillStyle = COL.red;
+  ctx.font = 'bold 48px "Courier New", monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('ROAD CLOSED', W / 2, 200);
+  ctx.restore();
+
+  ctx.fillStyle = COL.dimWhite;
+  ctx.font = '20px "Courier New", monospace';
+  ctx.fillText('INFRASTRUCTURE COMPROMISED', W / 2, 250);
+
+  ctx.fillStyle = COL.cyan;
+  ctx.font = 'bold 28px "Courier New", monospace';
+  ctx.fillText('FINAL SCORE: ' + score, W / 2, 320);
+
+  ctx.fillStyle = COL.orange;
+  ctx.font = '18px "Courier New", monospace';
+  ctx.fillText('WAVE REACHED: ' + wave, W / 2, 360);
+
+  if (score >= highScore && score > 0) {
+    ctx.fillStyle = COL.gold;
+    ctx.font = 'bold 20px "Courier New", monospace';
+    ctx.fillText('NEW HIGH SCORE!', W / 2, 410);
+  }
+
+  if (gameoverTimer > 1.5 && Math.floor(gameoverTimer * 2) % 2 === 0) {
+    ctx.fillStyle = COL.green;
+    ctx.font = '18px "Courier New", monospace';
+    ctx.fillText('PRESS ENTER TO PLAY AGAIN', W / 2, 480);
+  }
+}
+
+// ============================================================
+// WAVE TRANSITION
+// ============================================================
+
+function drawWaveTransition(dt) {
+  drawBackground();
+  drawShieldsAll();
+  drawPlayer();
+  drawHUD();
+
+  ctx.save();
+  ctx.shadowColor = COL.green;
+  ctx.shadowBlur = 15;
+  ctx.fillStyle = COL.green;
+  ctx.font = 'bold 36px "Courier New", monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('WAVE ' + wave + ' CLEARED!', W / 2, H / 2 - 20);
+  ctx.restore();
+
+  ctx.fillStyle = COL.cyan;
+  ctx.font = '20px "Courier New", monospace';
+  ctx.fillText('NEXT WAVE INCOMING...', W / 2, H / 2 + 20);
+}
+
+function drawShieldsAll() {
+  for (const s of shields) drawShield(s);
+}
+
+// ============================================================
+// MAIN LOOP
+// ============================================================
+
+let lastTime = performance.now();
+
+function gameLoop(now) {
+  const dt = Math.min((now - lastTime) / 1000, 0.05); // cap delta
+  lastTime = now;
+
+  switch (state) {
+    case 'title':
+      drawTitleScreen(dt);
+      if (keys['Enter'] || keys['NumpadEnter']) {
+        ensureAudio();
+        resetGame();
+        state = 'playing';
+        keys['Enter'] = false;
+        keys['NumpadEnter'] = false;
+      }
+      break;
+
+    case 'playing':
+      // Update
+      updatePlayer(dt);
+      updatePlayerBullets(dt);
+      updateEnemies(dt);
+      updateEnemyBullets(dt);
+      updateInspector(dt);
+      updateParticles(dt);
+      updateScorePopups(dt);
+
+      // Draw
+      drawBackground();
+      drawShieldsAll();
+      drawEnemies();
+      drawInspector();
+      drawPlayer();
+      drawPlayerBullets();
+      drawEnemyBullets();
+      drawParticles();
+      drawScorePopups();
+      drawHUD();
+      break;
+
+    case 'waveTransition':
+      waveTransTimer -= dt;
+      updateParticles(dt);
+      updateScorePopups(dt);
+      drawWaveTransition(dt);
+      drawParticles();
+      drawScorePopups();
+      if (waveTransTimer <= 0) {
+        startNextWave();
+        state = 'playing';
+      }
+      break;
+
+    case 'gameover':
+      drawGameOverScreen(dt);
+      if (gameoverTimer > 1.5 && (keys['Enter'] || keys['NumpadEnter'])) {
+        state = 'title';
+        gameoverTimer = 0;
+        keys['Enter'] = false;
+        keys['NumpadEnter'] = false;
+      }
+      break;
+  }
+
+  requestAnimationFrame(gameLoop);
+}
+
+requestAnimationFrame(gameLoop);
+
+</script>
+</body>
+</html>

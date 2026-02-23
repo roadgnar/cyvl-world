@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Infrastructure Hangman</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #0a0a1a;
+    color: #00e5ff;
+    font-family: 'Courier New', Courier, monospace;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    overflow-x: hidden;
+    user-select: none;
+  }
+
+  #game-wrapper {
+    width: 100%;
+    max-width: 800px;
+    padding: 10px 16px 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  h1 {
+    font-size: 1.6em;
+    text-align: center;
+    margin: 12px 0 4px;
+    text-shadow: 0 0 12px #00e5ff, 0 0 30px #00e5ff55;
+    letter-spacing: 3px;
+  }
+
+  #scoreboard {
+    display: flex;
+    gap: 28px;
+    font-size: 1em;
+    margin: 6px 0 10px;
+    letter-spacing: 1px;
+  }
+  #scoreboard .wins { color: #00ff88; text-shadow: 0 0 8px #00ff8866; }
+  #scoreboard .losses { color: #ff2244; text-shadow: 0 0 8px #ff224466; }
+  #scoreboard .round { color: #ff6600; text-shadow: 0 0 8px #ff660066; }
+
+  #category {
+    font-size: 1.05em;
+    color: #ff6600;
+    text-shadow: 0 0 10px #ff660055;
+    margin: 2px 0 10px;
+    letter-spacing: 2px;
+  }
+
+  /* Bridge drawing area */
+  #bridge-container {
+    width: 100%;
+    max-width: 520px;
+    height: 240px;
+    position: relative;
+    margin: 0 auto 14px;
+  }
+
+  #bridge-svg {
+    width: 100%;
+    height: 100%;
+  }
+
+  #bridge-svg .structure {
+    stroke: #00e5ff;
+    stroke-width: 2;
+    fill: none;
+    filter: drop-shadow(0 0 4px #00e5ff88);
+    transition: opacity 0.5s, transform 0.5s;
+  }
+
+  #bridge-svg .water {
+    stroke: #0066aa;
+    stroke-width: 1.5;
+    fill: none;
+    opacity: 0.5;
+  }
+
+  #bridge-svg .broken {
+    opacity: 0;
+  }
+
+  #bridge-svg .falling {
+    animation: fallPiece 0.8s ease-in forwards;
+  }
+
+  @keyframes fallPiece {
+    0% { transform: translateY(0) rotate(0); opacity: 1; }
+    100% { transform: translateY(80px) rotate(15deg); opacity: 0; }
+  }
+
+  #bridge-svg .crack {
+    stroke: #ff2244;
+    stroke-width: 2;
+    fill: none;
+    opacity: 0;
+    filter: drop-shadow(0 0 3px #ff2244);
+  }
+
+  #bridge-svg .crack.visible {
+    opacity: 1;
+    animation: crackFlicker 0.3s ease-out;
+  }
+
+  @keyframes crackFlicker {
+    0% { opacity: 0; stroke-width: 4; }
+    50% { opacity: 1; stroke-width: 3; }
+    100% { opacity: 1; stroke-width: 2; }
+  }
+
+  /* Guesses remaining */
+  #guesses-left {
+    font-size: 0.95em;
+    margin: 0 0 10px;
+    color: #00e5ff;
+    letter-spacing: 1px;
+  }
+  #guesses-left .count {
+    color: #ff6600;
+    font-weight: bold;
+    font-size: 1.1em;
+  }
+
+  /* Word blanks */
+  #word-display {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin: 0 0 18px;
+    min-height: 52px;
+  }
+
+  .letter-blank {
+    width: 38px;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.7em;
+    font-weight: bold;
+    border-bottom: 3px solid #00e5ff44;
+    color: #00e5ff;
+    text-shadow: 0 0 10px #00e5ffaa;
+    transition: all 0.3s;
+    position: relative;
+  }
+
+  .letter-blank.revealed {
+    border-bottom-color: #00ff88;
+    color: #00ff88;
+    text-shadow: 0 0 12px #00ff88aa;
+    animation: revealPop 0.3s ease-out;
+  }
+
+  .letter-blank.wrong-reveal {
+    border-bottom-color: #ff2244;
+    color: #ff2244;
+    text-shadow: 0 0 12px #ff2244aa;
+  }
+
+  @keyframes revealPop {
+    0% { transform: scale(1.4); }
+    100% { transform: scale(1); }
+  }
+
+  /* Wrong letters */
+  #wrong-letters {
+    min-height: 28px;
+    margin: 0 0 14px;
+    font-size: 0.95em;
+    color: #ff2244;
+    text-shadow: 0 0 6px #ff224466;
+    letter-spacing: 3px;
+    text-align: center;
+  }
+
+  /* Keyboard */
+  #keyboard {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-items: center;
+    margin: 0 0 16px;
+  }
+
+  .kb-row {
+    display: flex;
+    gap: 6px;
+    justify-content: center;
+  }
+
+  .key {
+    width: 40px;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.1em;
+    font-family: 'Courier New', Courier, monospace;
+    font-weight: bold;
+    background: #0a0a1a;
+    color: #00e5ff;
+    border: 1.5px solid #00e5ff55;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: all 0.15s;
+    text-shadow: 0 0 6px #00e5ff66;
+  }
+
+  .key:hover:not(.used) {
+    background: #00e5ff18;
+    border-color: #00e5ff;
+    box-shadow: 0 0 12px #00e5ff44, inset 0 0 8px #00e5ff11;
+    transform: scale(1.08);
+  }
+
+  .key.correct {
+    background: #00ff8822;
+    border-color: #00ff88;
+    color: #00ff88;
+    text-shadow: 0 0 8px #00ff88aa;
+    cursor: default;
+    opacity: 0.7;
+  }
+
+  .key.wrong {
+    background: #ff224418;
+    border-color: #ff2244;
+    color: #ff2244;
+    text-shadow: 0 0 8px #ff2244aa;
+    cursor: default;
+    opacity: 0.45;
+  }
+
+  /* Status message */
+  #message {
+    font-size: 1.3em;
+    min-height: 36px;
+    letter-spacing: 2px;
+    text-align: center;
+    margin: 4px 0;
+  }
+
+  #message.win {
+    color: #00ff88;
+    text-shadow: 0 0 16px #00ff88aa;
+    animation: pulseGlow 0.6s ease-in-out 3;
+  }
+
+  #message.lose {
+    color: #ff2244;
+    text-shadow: 0 0 16px #ff2244aa;
+    animation: pulseGlow 0.6s ease-in-out 3;
+  }
+
+  @keyframes pulseGlow {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+
+  /* Scanline overlay */
+  #game-wrapper::before {
+    content: '';
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0, 229, 255, 0.015) 2px,
+      rgba(0, 229, 255, 0.015) 4px
+    );
+    pointer-events: none;
+    z-index: 999;
+  }
+
+  /* Responsive */
+  @media (max-width: 520px) {
+    .key { width: 32px; height: 38px; font-size: 0.95em; }
+    .kb-row { gap: 4px; }
+    .letter-blank { width: 28px; height: 38px; font-size: 1.3em; }
+    #word-display { gap: 6px; }
+    h1 { font-size: 1.2em; }
+    #bridge-container { height: 190px; }
+  }
+</style>
+</head>
+<body>
+<script src="/shared/arcade-nav.js"></script>
+
+<div id="game-wrapper">
+  <h1>INFRASTRUCTURE HANGMAN</h1>
+  <div id="scoreboard">
+    <span class="round">ROUND: <span id="round-num">1</span></span>
+    <span class="wins">W: <span id="win-count">0</span></span>
+    <span class="losses">L: <span id="loss-count">0</span></span>
+  </div>
+  <div id="category"></div>
+
+  <div id="bridge-container">
+    <svg id="bridge-svg" viewBox="0 0 520 240" preserveAspectRatio="xMidYMid meet"></svg>
+  </div>
+
+  <div id="guesses-left">STRUCTURAL INTEGRITY: <span class="count" id="remaining">8</span>/8</div>
+  <div id="word-display"></div>
+  <div id="wrong-letters"></div>
+  <div id="keyboard"></div>
+  <div id="message"></div>
+</div>
+
+<script>
+(function() {
+  // ===================== WORD DATA =====================
+  const WORDS = [
+    { word: 'POTHOLE',     category: 'ROAD DEFECT' },
+    { word: 'ASPHALT',     category: 'ROAD MATERIAL' },
+    { word: 'GUARDRAIL',   category: 'ROAD FEATURE' },
+    { word: 'CULVERT',     category: 'DRAINAGE STRUCTURE' },
+    { word: 'OVERPASS',    category: 'STRUCTURE' },
+    { word: 'BRIDGE',      category: 'STRUCTURE' },
+    { word: 'HIGHWAY',     category: 'ROADWAY' },
+    { word: 'SIDEWALK',    category: 'PEDESTRIAN PATH' },
+    { word: 'DRAINAGE',    category: 'WATER MANAGEMENT' },
+    { word: 'PAVEMENT',    category: 'ROAD SURFACE' },
+    { word: 'SURVEYOR',    category: 'PROFESSION' },
+    { word: 'GRADING',     category: 'EARTHWORK' },
+    { word: 'CONCRETE',    category: 'MATERIAL' },
+    { word: 'MANHOLE',     category: 'UTILITY ACCESS' },
+    { word: 'CROSSWALK',   category: 'PEDESTRIAN FEATURE' },
+    { word: 'TRAFFIC',     category: 'ROAD MANAGEMENT' },
+    { word: 'SIGNAL',      category: 'TRAFFIC CONTROL' },
+    { word: 'MEDIAN',      category: 'ROAD FEATURE' },
+    { word: 'SHOULDER',    category: 'ROAD FEATURE' },
+    { word: 'RETAINING',   category: 'WALL TYPE' },
+    { word: 'EXCAVATOR',   category: 'HEAVY EQUIPMENT' },
+    { word: 'BULLDOZER',   category: 'HEAVY EQUIPMENT' },
+    { word: 'PIPELINE',    category: 'UTILITY' },
+    { word: 'AQUEDUCT',    category: 'WATER STRUCTURE' },
+    { word: 'FREEWAY',     category: 'ROADWAY' },
+    { word: 'INTERCHANGE', category: 'ROAD JUNCTION' },
+    { word: 'ROUNDABOUT',  category: 'ROAD JUNCTION' },
+    { word: 'CURB',        category: 'ROAD FEATURE' },
+    { word: 'GUTTER',      category: 'DRAINAGE FEATURE' },
+    { word: 'SUBGRADE',    category: 'ROAD LAYER' },
+  ];
+
+  const MAX_WRONG = 8;
+  const NEXT_ROUND_DELAY = 2200;
+
+  // ===================== GAME STATE =====================
+  let currentWord = '';
+  let currentCategory = '';
+  let guessedLetters = new Set();
+  let wrongCount = 0;
+  let wins = 0;
+  let losses = 0;
+  let round = 1;
+  let gameOver = false;
+  let wordQueue = [];
+  let audioCtx = null;
+
+  // ===================== DOM REFS =====================
+  const wordDisplay = document.getElementById('word-display');
+  const wrongLettersEl = document.getElementById('wrong-letters');
+  const keyboard = document.getElementById('keyboard');
+  const messageEl = document.getElementById('message');
+  const categoryEl = document.getElementById('category');
+  const remainingEl = document.getElementById('remaining');
+  const roundEl = document.getElementById('round-num');
+  const winEl = document.getElementById('win-count');
+  const lossEl = document.getElementById('loss-count');
+  const bridgeSvg = document.getElementById('bridge-svg');
+
+  // ===================== AUDIO =====================
+  function getAudioCtx() {
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    return audioCtx;
+  }
+
+  function playTone(freq, duration, type, volume) {
+    try {
+      const ctx = getAudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = type || 'sine';
+      osc.frequency.setValueAtTime(freq, ctx.currentTime);
+      gain.gain.setValueAtTime(volume || 0.12, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + duration);
+    } catch(e) {}
+  }
+
+  function soundCorrect() {
+    playTone(880, 0.15, 'sine', 0.13);
+    setTimeout(() => playTone(1100, 0.12, 'sine', 0.10), 80);
+  }
+
+  function soundWrong() {
+    playTone(150, 0.25, 'sawtooth', 0.10);
+    playTone(120, 0.3, 'square', 0.06);
+  }
+
+  function soundWin() {
+    const notes = [523, 659, 784, 1047];
+    notes.forEach((n, i) => {
+      setTimeout(() => playTone(n, 0.25, 'sine', 0.12), i * 120);
+    });
+  }
+
+  function soundLose() {
+    const notes = [400, 350, 300, 200, 150];
+    notes.forEach((n, i) => {
+      setTimeout(() => playTone(n, 0.3, 'sawtooth', 0.09), i * 150);
+    });
+    setTimeout(() => {
+      playTone(80, 0.7, 'square', 0.08);
+      playTone(60, 0.8, 'sawtooth', 0.06);
+    }, 600);
+  }
+
+  // ===================== BRIDGE DRAWING =====================
+  function buildBridge() {
+    // SVG bridge: left pier, right pier, deck, cables, railings, trusses
+    // 8 damageable groups
+    bridgeSvg.innerHTML = `
+      <!-- Water -->
+      <path class="water" d="M0,220 Q65,210 130,220 Q195,230 260,220 Q325,210 390,220 Q455,230 520,220"/>
+      <path class="water" d="M0,230 Q65,222 130,232 Q195,240 260,230 Q325,222 390,232 Q455,240 520,230" style="opacity:0.3"/>
+
+      <!-- Ground / banks -->
+      <g class="structure" id="bp-ground">
+        <line x1="0" y1="210" x2="80" y2="210" stroke-width="3"/>
+        <line x1="440" y1="210" x2="520" y2="210" stroke-width="3"/>
+      </g>
+
+      <!-- Left pier -->
+      <g class="structure" id="bp-lpier">
+        <rect x="60" y="145" width="28" height="65" rx="2"/>
+        <line x1="60" y1="155" x2="88" y2="155"/>
+        <line x1="60" y1="175" x2="88" y2="175"/>
+        <line x1="60" y1="195" x2="88" y2="195"/>
+      </g>
+
+      <!-- Right pier -->
+      <g class="structure" id="bp-rpier">
+        <rect x="432" y="145" width="28" height="65" rx="2"/>
+        <line x1="432" y1="155" x2="460" y2="155"/>
+        <line x1="432" y1="175" x2="460" y2="175"/>
+        <line x1="432" y1="195" x2="460" y2="195"/>
+      </g>
+
+      <!-- Main deck -->
+      <g class="structure" id="bp-deck">
+        <rect x="55" y="140" width="410" height="10" rx="2" stroke-width="2"/>
+        <line x1="55" y1="145" x2="465" y2="145" stroke-width="1" opacity="0.5"/>
+      </g>
+
+      <!-- Left cables / arch -->
+      <g class="structure" id="bp-lcables">
+        <path d="M74,145 Q74,60 180,75" stroke-width="1.5"/>
+        <path d="M74,145 Q90,80 200,90" stroke-width="1.5"/>
+        <line x1="130" y1="100" x2="130" y2="145" stroke-width="1" opacity="0.6"/>
+        <line x1="160" y1="90" x2="160" y2="145" stroke-width="1" opacity="0.6"/>
+      </g>
+
+      <!-- Right cables / arch -->
+      <g class="structure" id="bp-rcables">
+        <path d="M446,145 Q446,60 340,75" stroke-width="1.5"/>
+        <path d="M446,145 Q430,80 320,90" stroke-width="1.5"/>
+        <line x1="390" y1="100" x2="390" y2="145" stroke-width="1" opacity="0.6"/>
+        <line x1="360" y1="90" x2="360" y2="145" stroke-width="1" opacity="0.6"/>
+      </g>
+
+      <!-- Center tower / top structure -->
+      <g class="structure" id="bp-tower">
+        <line x1="255" y1="50" x2="255" y2="140" stroke-width="2"/>
+        <line x1="265" y1="50" x2="265" y2="140" stroke-width="2"/>
+        <line x1="250" y1="50" x2="270" y2="50" stroke-width="2.5"/>
+        <line x1="255" y1="70" x2="265" y2="70" stroke-width="1"/>
+        <line x1="255" y1="90" x2="265" y2="90" stroke-width="1"/>
+        <line x1="255" y1="110" x2="265" y2="110" stroke-width="1"/>
+        <!-- Top cables to tower -->
+        <path d="M180,75 L255,52" stroke-width="1.2"/>
+        <path d="M200,90 L260,55" stroke-width="1.2"/>
+        <path d="M340,75 L265,52" stroke-width="1.2"/>
+        <path d="M320,90 L260,55" stroke-width="1.2"/>
+      </g>
+
+      <!-- Railings -->
+      <g class="structure" id="bp-railings">
+        <line x1="75" y1="130" x2="445" y2="130" stroke-width="1" opacity="0.7"/>
+        <line x1="100" y1="130" x2="100" y2="140" stroke-width="1" opacity="0.5"/>
+        <line x1="140" y1="130" x2="140" y2="140" stroke-width="1" opacity="0.5"/>
+        <line x1="180" y1="130" x2="180" y2="140" stroke-width="1" opacity="0.5"/>
+        <line x1="220" y1="130" x2="220" y2="140" stroke-width="1" opacity="0.5"/>
+        <line x1="260" y1="130" x2="260" y2="140" stroke-width="1" opacity="0.5"/>
+        <line x1="300" y1="130" x2="300" y2="140" stroke-width="1" opacity="0.5"/>
+        <line x1="340" y1="130" x2="340" y2="140" stroke-width="1" opacity="0.5"/>
+        <line x1="380" y1="130" x2="380" y2="140" stroke-width="1" opacity="0.5"/>
+        <line x1="420" y1="130" x2="420" y2="140" stroke-width="1" opacity="0.5"/>
+      </g>
+
+      <!-- Under-deck trusses -->
+      <g class="structure" id="bp-trusses">
+        <path d="M88,150 L150,170 L210,150 L270,170 L330,150 L390,170 L432,150" stroke-width="1.2" opacity="0.6"/>
+        <line x1="150" y1="150" x2="150" y2="170" stroke-width="1" opacity="0.4"/>
+        <line x1="210" y1="150" x2="210" y2="170" stroke-width="1" opacity="0.4"/>
+        <line x1="270" y1="150" x2="270" y2="170" stroke-width="1" opacity="0.4"/>
+        <line x1="330" y1="150" x2="330" y2="170" stroke-width="1" opacity="0.4"/>
+        <line x1="390" y1="150" x2="390" y2="170" stroke-width="1" opacity="0.4"/>
+      </g>
+
+      <!-- Crack overlays (hidden by default, shown progressively) -->
+      <line class="crack" id="crack-1" x1="130" y1="138" x2="145" y2="152"/>
+      <line class="crack" id="crack-2" x1="380" y1="138" x2="395" y2="152"/>
+      <line class="crack" id="crack-3" x1="240" y1="140" x2="260" y2="155"/>
+      <line class="crack" id="crack-4" x1="310" y1="140" x2="325" y2="158"/>
+      <line class="crack" id="crack-5" x1="170" y1="142" x2="185" y2="158"/>
+      <line class="crack" id="crack-6" x1="74" y1="160" x2="65" y2="180"/>
+      <line class="crack" id="crack-7" x1="446" y1="160" x2="455" y2="180"/>
+      <line class="crack" id="crack-8" x1="250" y1="50" x2="240" y2="65"/>
+    `;
+  }
+
+  // The order in which bridge parts break (indices map to damage stages 1-8)
+  const DAMAGE_SEQUENCE = [
+    // stage 1: railings start breaking
+    { crack: 'crack-1', remove: null },
+    // stage 2: more cracks
+    { crack: 'crack-2', remove: null },
+    // stage 3: trusses damaged
+    { crack: 'crack-3', remove: 'bp-trusses' },
+    // stage 4: railings fall off
+    { crack: 'crack-4', remove: 'bp-railings' },
+    // stage 5: left cables snap
+    { crack: 'crack-5', remove: 'bp-lcables' },
+    // stage 6: right cables snap
+    { crack: 'crack-6', remove: 'bp-rcables' },
+    // stage 7: tower collapses
+    { crack: 'crack-7', remove: 'bp-tower' },
+    // stage 8: deck collapses -- game over
+    { crack: 'crack-8', remove: 'bp-deck' },
+  ];
+
+  function applyDamage(stage) {
+    // stage is 1-based (1 = first wrong guess)
+    if (stage < 1 || stage > DAMAGE_SEQUENCE.length) return;
+    const dmg = DAMAGE_SEQUENCE[stage - 1];
+
+    // Show crack
+    const crackEl = document.getElementById(dmg.crack);
+    if (crackEl) crackEl.classList.add('visible');
+
+    // Remove structural element
+    if (dmg.remove) {
+      const part = document.getElementById(dmg.remove);
+      if (part) {
+        part.classList.add('falling');
+        setTimeout(() => part.classList.add('broken'), 800);
+      }
+    }
+
+    // Change remaining structure color toward red as damage increases
+    const allStructure = bridgeSvg.querySelectorAll('.structure:not(.broken)');
+    const damageRatio = stage / MAX_WRONG;
+    allStructure.forEach(el => {
+      if (damageRatio > 0.5) {
+        const r = Math.round(255 * damageRatio);
+        const g = Math.round(229 * (1 - damageRatio));
+        const b = Math.round(255 * (1 - damageRatio));
+        el.style.stroke = `rgb(${r},${g},${b})`;
+        el.style.filter = `drop-shadow(0 0 4px rgba(${r},${g},${b},0.5))`;
+      }
+    });
+  }
+
+  // ===================== KEYBOARD =====================
+  function buildKeyboard() {
+    const rows = ['QWERTYUIOP', 'ASDFGHJKL', 'ZXCVBNM'];
+    keyboard.innerHTML = '';
+    rows.forEach(row => {
+      const rowEl = document.createElement('div');
+      rowEl.className = 'kb-row';
+      for (const ch of row) {
+        const key = document.createElement('button');
+        key.className = 'key';
+        key.textContent = ch;
+        key.dataset.letter = ch;
+        key.addEventListener('click', () => handleGuess(ch));
+        rowEl.appendChild(key);
+      }
+      keyboard.appendChild(rowEl);
+    });
+  }
+
+  // ===================== WORD DISPLAY =====================
+  function renderWord() {
+    wordDisplay.innerHTML = '';
+    for (const ch of currentWord) {
+      const span = document.createElement('span');
+      span.className = 'letter-blank';
+      if (guessedLetters.has(ch)) {
+        span.textContent = ch;
+        span.classList.add('revealed');
+      } else {
+        span.textContent = '_';
+      }
+      wordDisplay.appendChild(span);
+    }
+  }
+
+  function revealFullWord(isWin) {
+    const blanks = wordDisplay.querySelectorAll('.letter-blank');
+    for (let i = 0; i < currentWord.length; i++) {
+      if (!guessedLetters.has(currentWord[i])) {
+        blanks[i].textContent = currentWord[i];
+        blanks[i].classList.add(isWin ? 'revealed' : 'wrong-reveal');
+      }
+    }
+  }
+
+  // ===================== GAME LOGIC =====================
+  function shuffleArray(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  }
+
+  function nextWord() {
+    if (wordQueue.length === 0) {
+      wordQueue = shuffleArray([...WORDS]);
+    }
+    return wordQueue.pop();
+  }
+
+  function startRound() {
+    const entry = nextWord();
+    currentWord = entry.word;
+    currentCategory = entry.category;
+    guessedLetters = new Set();
+    wrongCount = 0;
+    gameOver = false;
+
+    // Update UI
+    roundEl.textContent = round;
+    winEl.textContent = wins;
+    lossEl.textContent = losses;
+    categoryEl.textContent = '[ ' + currentCategory + ' ]';
+    remainingEl.textContent = MAX_WRONG;
+    wrongLettersEl.textContent = '';
+    messageEl.textContent = '';
+    messageEl.className = '';
+
+    // Rebuild bridge and keyboard
+    buildBridge();
+    buildKeyboard();
+    renderWord();
+  }
+
+  function handleGuess(letter) {
+    if (gameOver) return;
+    if (guessedLetters.has(letter)) return;
+
+    guessedLetters.add(letter);
+
+    const keyBtn = keyboard.querySelector(`[data-letter="${letter}"]`);
+
+    if (currentWord.includes(letter)) {
+      // Correct
+      if (keyBtn) keyBtn.classList.add('correct');
+      soundCorrect();
+      renderWord();
+      checkWin();
+    } else {
+      // Wrong
+      wrongCount++;
+      if (keyBtn) keyBtn.classList.add('wrong');
+      soundWrong();
+      applyDamage(wrongCount);
+      remainingEl.textContent = MAX_WRONG - wrongCount;
+
+      // Update wrong letters display
+      const wrongArr = [];
+      guessedLetters.forEach(l => {
+        if (!currentWord.includes(l)) wrongArr.push(l);
+      });
+      wrongLettersEl.textContent = wrongArr.join('  ');
+
+      checkLose();
+    }
+  }
+
+  function checkWin() {
+    const allRevealed = [...currentWord].every(ch => guessedLetters.has(ch));
+    if (allRevealed) {
+      gameOver = true;
+      wins++;
+      winEl.textContent = wins;
+      messageEl.textContent = 'BRIDGE SAVED!';
+      messageEl.className = 'win';
+      soundWin();
+      setTimeout(() => {
+        round++;
+        startRound();
+      }, NEXT_ROUND_DELAY);
+    }
+  }
+
+  function checkLose() {
+    if (wrongCount >= MAX_WRONG) {
+      gameOver = true;
+      losses++;
+      lossEl.textContent = losses;
+      revealFullWord(false);
+      messageEl.textContent = 'BRIDGE COLLAPSED!';
+      messageEl.className = 'lose';
+      soundLose();
+      setTimeout(() => {
+        round++;
+        startRound();
+      }, NEXT_ROUND_DELAY + 500);
+    }
+  }
+
+  // ===================== KEYBOARD INPUT =====================
+  document.addEventListener('keydown', (e) => {
+    const key = e.key.toUpperCase();
+    if (/^[A-Z]$/.test(key)) {
+      handleGuess(key);
+    }
+  });
+
+  // ===================== INIT =====================
+  startRound();
+
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FIBER SNAKE</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #0a0a1a;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    font-family: 'Courier New', Courier, monospace;
+    color: #00e5ff;
+    overflow: hidden;
+  }
+
+  #gameWrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+
+  #hud {
+    display: flex;
+    justify-content: space-between;
+    width: 600px;
+    padding: 8px 12px;
+    background: rgba(0, 229, 255, 0.05);
+    border: 1px solid #0d2a3a;
+    border-radius: 4px;
+    font-size: 16px;
+    letter-spacing: 1px;
+  }
+
+  #hud span {
+    min-width: 140px;
+  }
+
+  #hud .label {
+    color: #0088aa;
+  }
+
+  #hud .value {
+    color: #00e5ff;
+    text-shadow: 0 0 6px rgba(0, 229, 255, 0.5);
+  }
+
+  #lives .life {
+    color: #00ff88;
+    text-shadow: 0 0 4px rgba(0, 255, 136, 0.6);
+  }
+
+  #lives .life.lost {
+    color: #1a1a2e;
+    text-shadow: none;
+  }
+
+  canvas {
+    border: 2px solid #0d2a3a;
+    border-radius: 4px;
+    box-shadow: 0 0 30px rgba(0, 229, 255, 0.08), inset 0 0 30px rgba(0, 229, 255, 0.03);
+  }
+
+  #message {
+    width: 600px;
+    text-align: center;
+    font-size: 12px;
+    color: #0088aa;
+    letter-spacing: 2px;
+    padding: 6px;
+  }
+</style>
+</head>
+<body>
+<script src="/shared/arcade-nav.js"></script>
+
+<div id="gameWrapper">
+  <div id="hud">
+    <span><span class="label">SCORE </span><span class="value" id="scoreDisplay">0</span></span>
+    <span><span class="label">LENGTH </span><span class="value" id="lengthDisplay">3</span></span>
+    <span><span class="label">SPEED </span><span class="value" id="speedDisplay">1</span></span>
+    <span id="lives"></span>
+  </div>
+  <canvas id="gameCanvas" width="600" height="600"></canvas>
+  <div id="message">ARROW KEYS / WASD TO MOVE</div>
+</div>
+
+<script>
+(function() {
+  // ── Constants ──
+  const GRID = 20;
+  const CELL = 30; // 600 / 20
+  const BG = '#0a0a1a';
+  const GRID_COLOR = '#0d2a3a';
+  const ROAD_COLOR = '#0f1a2a';
+  const SNAKE_COLOR = '#00e5ff';
+  const SNAKE_HEAD = '#80f0ff';
+  const DATA_NODE = '#00ff88';
+  const GOLD_NODE = '#ffd700';
+  const START_SPEED = 200;
+  const MIN_SPEED = 70;
+  const SPEED_STEP = 3; // ms faster per food eaten
+  const MAX_LIVES = 3;
+  const GOLD_SCORE = 50;
+  const DATA_SCORE = 10;
+  const GOLD_DURATION = 5000; // ms
+
+  // ── Canvas ──
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+
+  // ── Audio ──
+  let audioCtx = null;
+  function ensureAudio() {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+
+  function playTone(freq, duration, type, vol, ramp) {
+    ensureAudio();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = type || 'square';
+    osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+    if (ramp) osc.frequency.exponentialRampToValueAtTime(ramp, audioCtx.currentTime + duration);
+    gain.gain.setValueAtTime(vol || 0.1, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + duration);
+  }
+
+  function soundEat() {
+    playTone(600, 0.1, 'square', 0.08);
+    setTimeout(() => playTone(900, 0.1, 'square', 0.08), 50);
+  }
+
+  function soundGold() {
+    playTone(800, 0.1, 'sine', 0.1);
+    setTimeout(() => playTone(1200, 0.1, 'sine', 0.1), 70);
+    setTimeout(() => playTone(1600, 0.15, 'sine', 0.1), 140);
+  }
+
+  function soundDeath() {
+    playTone(400, 0.3, 'sawtooth', 0.12, 80);
+    setTimeout(() => playTone(200, 0.4, 'sawtooth', 0.1, 50), 200);
+  }
+
+  // ── State ──
+  const STATE = { TITLE: 0, PLAYING: 1, DYING: 2, GAMEOVER: 3 };
+  let state = STATE.TITLE;
+  let snake, dir, nextDir, score, lives, speed, foodsEaten;
+  let food, goldFood, goldTimer;
+  let trail; // afterglow positions
+  let loopTimer, animFrame;
+  let deathFlash = 0;
+  let pulseTime = 0;
+
+  // ── HUD ──
+  const scoreEl = document.getElementById('scoreDisplay');
+  const lengthEl = document.getElementById('lengthDisplay');
+  const speedEl = document.getElementById('speedDisplay');
+  const livesEl = document.getElementById('lives');
+  const msgEl = document.getElementById('message');
+
+  function updateHUD() {
+    scoreEl.textContent = score;
+    lengthEl.textContent = snake.length;
+    const speedLevel = Math.min(20, Math.floor((START_SPEED - speed) / SPEED_STEP) + 1);
+    speedEl.textContent = speedLevel;
+    let livesHTML = '<span class="label">LIVES </span>';
+    for (let i = 0; i < MAX_LIVES; i++) {
+      livesHTML += '<span class="life' + (i < lives ? '' : ' lost') + '">\u2588</span>';
+    }
+    livesEl.innerHTML = livesHTML;
+  }
+
+  // ── Food Placement ──
+  function randomCell() {
+    return { x: Math.floor(Math.random() * GRID), y: Math.floor(Math.random() * GRID) };
+  }
+
+  function isOnSnake(pos) {
+    return snake.some(s => s.x === pos.x && s.y === pos.y);
+  }
+
+  function isOnFood(pos) {
+    return food && pos.x === food.x && pos.y === food.y;
+  }
+
+  function placeFood() {
+    let pos;
+    do { pos = randomCell(); } while (isOnSnake(pos));
+    food = pos;
+  }
+
+  function placeGold() {
+    if (goldFood) return;
+    let pos;
+    do { pos = randomCell(); } while (isOnSnake(pos) || isOnFood(pos));
+    goldFood = pos;
+    clearTimeout(goldTimer);
+    goldTimer = setTimeout(() => { goldFood = null; }, GOLD_DURATION);
+  }
+
+  // ── Init / Reset ──
+  function initGame() {
+    const mid = Math.floor(GRID / 2);
+    snake = [
+      { x: mid, y: mid },
+      { x: mid - 1, y: mid },
+      { x: mid - 2, y: mid }
+    ];
+    dir = { x: 1, y: 0 };
+    nextDir = { x: 1, y: 0 };
+    score = 0;
+    lives = MAX_LIVES;
+    speed = START_SPEED;
+    foodsEaten = 0;
+    trail = [];
+    food = null;
+    goldFood = null;
+    clearTimeout(goldTimer);
+    placeFood();
+    updateHUD();
+  }
+
+  // ── Game Loop ──
+  function step() {
+    if (state !== STATE.PLAYING) return;
+
+    dir = { x: nextDir.x, y: nextDir.y };
+
+    const head = { x: snake[0].x + dir.x, y: snake[0].y + dir.y };
+
+    // Check wall collision
+    if (head.x < 0 || head.x >= GRID || head.y < 0 || head.y >= GRID) {
+      die();
+      return;
+    }
+
+    // Check self collision (skip last segment since it will move)
+    for (let i = 0; i < snake.length - 1; i++) {
+      if (snake[i].x === head.x && snake[i].y === head.y) {
+        die();
+        return;
+      }
+    }
+
+    // Move
+    snake.unshift(head);
+
+    let ate = false;
+
+    // Check gold food
+    if (goldFood && head.x === goldFood.x && head.y === goldFood.y) {
+      score += GOLD_SCORE;
+      goldFood = null;
+      clearTimeout(goldTimer);
+      soundGold();
+      ate = true;
+    }
+    // Check regular food
+    else if (food && head.x === food.x && head.y === food.y) {
+      score += DATA_SCORE;
+      placeFood();
+      soundEat();
+      ate = true;
+    }
+
+    if (ate) {
+      foodsEaten++;
+      // Speed up
+      speed = Math.max(MIN_SPEED, START_SPEED - foodsEaten * SPEED_STEP);
+      // Chance to spawn gold
+      if (!goldFood && Math.random() < 0.2) {
+        placeGold();
+      }
+    } else {
+      // Add tail to trail for afterglow
+      const removed = snake.pop();
+      trail.push({ x: removed.x, y: removed.y, alpha: 0.4 });
+    }
+
+    // Trim trail
+    trail = trail.filter(t => t.alpha > 0.02);
+    trail.forEach(t => t.alpha *= 0.7);
+
+    updateHUD();
+    scheduleStep();
+  }
+
+  function scheduleStep() {
+    clearTimeout(loopTimer);
+    loopTimer = setTimeout(step, speed);
+  }
+
+  function die() {
+    soundDeath();
+    lives--;
+    deathFlash = 30;
+    state = STATE.DYING;
+    clearTimeout(loopTimer);
+
+    if (lives <= 0) {
+      setTimeout(() => {
+        state = STATE.GAMEOVER;
+      }, 1000);
+    } else {
+      setTimeout(() => {
+        // Respawn
+        const mid = Math.floor(GRID / 2);
+        snake = [
+          { x: mid, y: mid },
+          { x: mid - 1, y: mid },
+          { x: mid - 2, y: mid }
+        ];
+        dir = { x: 1, y: 0 };
+        nextDir = { x: 1, y: 0 };
+        trail = [];
+        goldFood = null;
+        clearTimeout(goldTimer);
+        placeFood();
+        updateHUD();
+        state = STATE.PLAYING;
+        scheduleStep();
+      }, 1200);
+    }
+  }
+
+  // ── Drawing ──
+  function drawGrid() {
+    ctx.fillStyle = BG;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Road-like markings (every 5 cells)
+    ctx.fillStyle = ROAD_COLOR;
+    for (let i = 0; i < GRID; i++) {
+      if (i % 5 === 0) {
+        ctx.fillRect(i * CELL, 0, CELL, canvas.height);
+        ctx.fillRect(0, i * CELL, canvas.width, CELL);
+      }
+    }
+
+    // Grid lines
+    ctx.strokeStyle = GRID_COLOR;
+    ctx.lineWidth = 0.5;
+    for (let i = 0; i <= GRID; i++) {
+      ctx.beginPath();
+      ctx.moveTo(i * CELL, 0);
+      ctx.lineTo(i * CELL, canvas.height);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(0, i * CELL);
+      ctx.lineTo(canvas.width, i * CELL);
+      ctx.stroke();
+    }
+  }
+
+  function drawTrail() {
+    trail.forEach(t => {
+      ctx.fillStyle = 'rgba(0, 229, 255, ' + (t.alpha * 0.3) + ')';
+      ctx.shadowColor = 'rgba(0, 229, 255, ' + (t.alpha * 0.2) + ')';
+      ctx.shadowBlur = 6;
+      const pad = 3;
+      ctx.fillRect(t.x * CELL + pad, t.y * CELL + pad, CELL - pad * 2, CELL - pad * 2);
+    });
+    ctx.shadowBlur = 0;
+  }
+
+  function drawSnake() {
+    const flash = state === STATE.DYING && deathFlash > 0;
+    for (let i = snake.length - 1; i >= 0; i--) {
+      const seg = snake[i];
+      const isHead = i === 0;
+      const pad = isHead ? 1 : 3;
+      const alpha = flash ? (deathFlash % 4 < 2 ? 0.2 : 1) : 1;
+
+      if (isHead) {
+        ctx.fillStyle = flash ? 'rgba(255, 60, 60, ' + alpha + ')' : SNAKE_HEAD;
+        ctx.shadowColor = flash ? 'rgba(255, 60, 60, 0.8)' : 'rgba(0, 229, 255, 0.9)';
+        ctx.shadowBlur = 14;
+      } else {
+        // Gradient from bright to slightly dimmer along the body
+        const bodyAlpha = flash ? alpha : Math.max(0.5, 1 - (i / snake.length) * 0.4);
+        ctx.fillStyle = flash
+          ? 'rgba(255, 60, 60, ' + (bodyAlpha * alpha) + ')'
+          : 'rgba(0, 229, 255, ' + bodyAlpha + ')';
+        ctx.shadowColor = flash ? 'rgba(255, 60, 60, 0.3)' : 'rgba(0, 229, 255, 0.4)';
+        ctx.shadowBlur = 8;
+      }
+
+      const rx = 4;
+      const x = seg.x * CELL + pad;
+      const y = seg.y * CELL + pad;
+      const w = CELL - pad * 2;
+      const h = CELL - pad * 2;
+
+      ctx.beginPath();
+      ctx.moveTo(x + rx, y);
+      ctx.lineTo(x + w - rx, y);
+      ctx.quadraticCurveTo(x + w, y, x + w, y + rx);
+      ctx.lineTo(x + w, y + h - rx);
+      ctx.quadraticCurveTo(x + w, y + h, x + w - rx, y + h);
+      ctx.lineTo(x + rx, y + h);
+      ctx.quadraticCurveTo(x, y + h, x, y + h - rx);
+      ctx.lineTo(x, y + rx);
+      ctx.quadraticCurveTo(x, y, x + rx, y);
+      ctx.closePath();
+      ctx.fill();
+
+      // Connection lines inside body
+      if (!isHead && i < snake.length - 1) {
+        ctx.strokeStyle = flash
+          ? 'rgba(255, 120, 120, 0.3)'
+          : 'rgba(0, 229, 255, 0.2)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(seg.x * CELL + CELL / 2, seg.y * CELL + CELL / 2 - 4);
+        ctx.lineTo(seg.x * CELL + CELL / 2, seg.y * CELL + CELL / 2 + 4);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(seg.x * CELL + CELL / 2 - 4, seg.y * CELL + CELL / 2);
+        ctx.lineTo(seg.x * CELL + CELL / 2 + 4, seg.y * CELL + CELL / 2);
+        ctx.stroke();
+      }
+    }
+    ctx.shadowBlur = 0;
+  }
+
+  function drawFood(time) {
+    if (!food) return;
+    const pulse = 0.8 + 0.2 * Math.sin(time * 0.005);
+    const pad = 5;
+    const glow = 10 + 6 * Math.sin(time * 0.005);
+
+    ctx.shadowColor = DATA_NODE;
+    ctx.shadowBlur = glow;
+    ctx.fillStyle = 'rgba(0, 255, 136, ' + pulse + ')';
+    ctx.fillRect(food.x * CELL + pad, food.y * CELL + pad, CELL - pad * 2, CELL - pad * 2);
+
+    // Inner bright center
+    ctx.fillStyle = 'rgba(200, 255, 220, ' + (pulse * 0.5) + ')';
+    const innerPad = 10;
+    ctx.fillRect(food.x * CELL + innerPad, food.y * CELL + innerPad, CELL - innerPad * 2, CELL - innerPad * 2);
+
+    ctx.shadowBlur = 0;
+
+    // Label
+    ctx.fillStyle = 'rgba(0, 255, 136, 0.5)';
+    ctx.font = '7px Courier New';
+    ctx.textAlign = 'center';
+    ctx.fillText('DATA', food.x * CELL + CELL / 2, food.y * CELL + CELL / 2 + 2);
+  }
+
+  function drawGoldFood(time) {
+    if (!goldFood) return;
+    const pulse = 0.7 + 0.3 * Math.sin(time * 0.008);
+    const sparkle = Math.sin(time * 0.02) > 0.7 ? 1.5 : 1;
+    const pad = 4;
+    const glow = 14 + 8 * Math.sin(time * 0.006);
+
+    ctx.shadowColor = GOLD_NODE;
+    ctx.shadowBlur = glow * sparkle;
+    ctx.fillStyle = 'rgba(255, 215, 0, ' + pulse + ')';
+    ctx.fillRect(goldFood.x * CELL + pad, goldFood.y * CELL + pad, CELL - pad * 2, CELL - pad * 2);
+
+    // Inner bright center
+    ctx.fillStyle = 'rgba(255, 255, 200, ' + (pulse * 0.6) + ')';
+    const innerPad = 9;
+    ctx.fillRect(goldFood.x * CELL + innerPad, goldFood.y * CELL + innerPad, CELL - innerPad * 2, CELL - innerPad * 2);
+
+    // Sparkle particles
+    if (sparkle > 1) {
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+      const sx = goldFood.x * CELL + CELL / 2 + Math.sin(time * 0.01) * 8;
+      const sy = goldFood.y * CELL + CELL / 2 + Math.cos(time * 0.013) * 8;
+      ctx.fillRect(sx - 1, sy - 1, 2, 2);
+    }
+
+    ctx.shadowBlur = 0;
+
+    // Label
+    ctx.fillStyle = 'rgba(255, 215, 0, 0.7)';
+    ctx.font = 'bold 7px Courier New';
+    ctx.textAlign = 'center';
+    ctx.fillText('GOLD', goldFood.x * CELL + CELL / 2, goldFood.y * CELL + CELL / 2 + 2);
+  }
+
+  function drawTitleScreen(time) {
+    drawGrid();
+
+    // Title glow
+    const titlePulse = 0.7 + 0.3 * Math.sin(time * 0.003);
+
+    ctx.textAlign = 'center';
+
+    // Title
+    ctx.shadowColor = 'rgba(0, 229, 255, 0.8)';
+    ctx.shadowBlur = 20 * titlePulse;
+    ctx.fillStyle = 'rgba(0, 229, 255, ' + titlePulse + ')';
+    ctx.font = 'bold 48px Courier New';
+    ctx.fillText('FIBER SNAKE', canvas.width / 2, 160);
+
+    ctx.shadowBlur = 0;
+
+    // Subtitle
+    ctx.fillStyle = '#0088aa';
+    ctx.font = '14px Courier New';
+    ctx.fillText('LAY FIBER OPTIC CABLE THROUGH THE CITY GRID', canvas.width / 2, 200);
+
+    // Controls
+    ctx.fillStyle = '#00ff88';
+    ctx.font = '13px Courier New';
+    ctx.fillText('CONTROLS', canvas.width / 2, 260);
+    ctx.fillStyle = '#0088aa';
+    ctx.font = '12px Courier New';
+    ctx.fillText('ARROW KEYS  or  WASD  to move', canvas.width / 2, 285);
+
+    // Scoring
+    ctx.fillStyle = '#00ff88';
+    ctx.font = '13px Courier New';
+    ctx.fillText('SCORING', canvas.width / 2, 325);
+    ctx.fillStyle = DATA_NODE;
+    ctx.font = '12px Courier New';
+    ctx.fillText('DATA NODE  +10 pts', canvas.width / 2, 350);
+    ctx.fillStyle = GOLD_NODE;
+    ctx.fillText('GOLD NODE  +50 pts  (appears briefly!)', canvas.width / 2, 370);
+
+    // Lives
+    ctx.fillStyle = '#0088aa';
+    ctx.font = '12px Courier New';
+    ctx.fillText('3 LIVES  \u2014  SLOW START  \u2014  GENEROUS GRID', canvas.width / 2, 410);
+
+    // Start prompt
+    const startPulse = Math.sin(time * 0.005) > 0 ? 1 : 0.4;
+    ctx.fillStyle = 'rgba(0, 229, 255, ' + startPulse + ')';
+    ctx.shadowColor = 'rgba(0, 229, 255, 0.5)';
+    ctx.shadowBlur = 10;
+    ctx.font = 'bold 18px Courier New';
+    ctx.fillText('PRESS ENTER TO START', canvas.width / 2, 490);
+    ctx.shadowBlur = 0;
+  }
+
+  function drawGameOverScreen(time) {
+    drawGrid();
+    drawTrail();
+    drawSnake();
+
+    // Overlay
+    ctx.fillStyle = 'rgba(10, 10, 26, 0.85)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.textAlign = 'center';
+
+    // Title
+    ctx.shadowColor = 'rgba(255, 60, 60, 0.8)';
+    ctx.shadowBlur = 20;
+    ctx.fillStyle = '#ff3c3c';
+    ctx.font = 'bold 42px Courier New';
+    ctx.fillText('CONNECTION LOST', canvas.width / 2, 180);
+    ctx.shadowBlur = 0;
+
+    // Stats
+    ctx.fillStyle = '#0088aa';
+    ctx.font = '14px Courier New';
+    ctx.fillText('FINAL REPORT', canvas.width / 2, 240);
+
+    ctx.fillStyle = '#00e5ff';
+    ctx.font = '20px Courier New';
+    ctx.fillText('SCORE: ' + score, canvas.width / 2, 280);
+    ctx.fillText('CABLE LENGTH: ' + snake.length + ' segments', canvas.width / 2, 310);
+    ctx.fillText('NODES COLLECTED: ' + foodsEaten, canvas.width / 2, 340);
+
+    const speedLevel = Math.min(20, Math.floor((START_SPEED - speed) / SPEED_STEP) + 1);
+    ctx.fillStyle = '#0088aa';
+    ctx.font = '14px Courier New';
+    ctx.fillText('FINAL SPEED LEVEL: ' + speedLevel, canvas.width / 2, 380);
+
+    // Retry
+    const retryPulse = Math.sin(time * 0.005) > 0 ? 1 : 0.4;
+    ctx.fillStyle = 'rgba(0, 229, 255, ' + retryPulse + ')';
+    ctx.shadowColor = 'rgba(0, 229, 255, 0.5)';
+    ctx.shadowBlur = 10;
+    ctx.font = 'bold 18px Courier New';
+    ctx.fillText('PRESS ENTER TO RETRY', canvas.width / 2, 460);
+    ctx.shadowBlur = 0;
+  }
+
+  // ── Main Render Loop ──
+  function render(time) {
+    pulseTime = time;
+
+    if (deathFlash > 0) deathFlash--;
+
+    if (state === STATE.TITLE) {
+      drawTitleScreen(time);
+    } else if (state === STATE.GAMEOVER) {
+      drawGameOverScreen(time);
+    } else {
+      drawGrid();
+      drawTrail();
+      drawFood(time);
+      drawGoldFood(time);
+      drawSnake();
+
+      // Dying overlay flash
+      if (state === STATE.DYING && deathFlash > 0) {
+        ctx.fillStyle = 'rgba(255, 40, 40, ' + (deathFlash / 60) * 0.3 + ')';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+    }
+
+    animFrame = requestAnimationFrame(render);
+  }
+
+  // ── Input ──
+  const keyMap = {
+    ArrowUp:    { x:  0, y: -1 },
+    ArrowDown:  { x:  0, y:  1 },
+    ArrowLeft:  { x: -1, y:  0 },
+    ArrowRight: { x:  1, y:  0 },
+    w:          { x:  0, y: -1 },
+    s:          { x:  0, y:  1 },
+    a:          { x: -1, y:  0 },
+    d:          { x:  1, y:  0 },
+    W:          { x:  0, y: -1 },
+    S:          { x:  0, y:  1 },
+    A:          { x: -1, y:  0 },
+    D:          { x:  1, y:  0 },
+  };
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      if (state === STATE.TITLE || state === STATE.GAMEOVER) {
+        ensureAudio();
+        initGame();
+        state = STATE.PLAYING;
+        scheduleStep();
+        msgEl.textContent = 'LAYING FIBER...';
+        return;
+      }
+    }
+
+    if (state !== STATE.PLAYING) return;
+
+    const newDir = keyMap[e.key];
+    if (newDir) {
+      e.preventDefault();
+      // Prevent 180 degree turn
+      if (newDir.x !== -dir.x || newDir.y !== -dir.y) {
+        nextDir = { x: newDir.x, y: newDir.y };
+      }
+    }
+  });
+
+  // ── Start ──
+  initGame();
+  state = STATE.TITLE;
+  msgEl.textContent = 'FIBER OPTIC NETWORK SIMULATOR v1.0';
+  animFrame = requestAnimationFrame(render);
+})();
+</script>
+</body>
+</html>

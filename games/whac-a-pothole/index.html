@@ -1,0 +1,889 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WHAC-A-POTHOLE</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0a1a;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    overflow: hidden;
+    font-family: 'Courier New', monospace;
+  }
+  canvas {
+    display: block;
+    cursor: pointer;
+    image-rendering: pixelated;
+  }
+</style>
+</head>
+<body>
+<script src="/shared/arcade-nav.js"></script>
+<canvas id="gameCanvas"></canvas>
+<script>
+// ============================================================
+//  WHAC-A-POTHOLE  —  Infrastructure-themed arcade game
+// ============================================================
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+// ---------- responsive sizing ----------
+function resize() {
+  const maxW = Math.min(window.innerWidth, 800);
+  const maxH = Math.min(window.innerHeight, 900);
+  const aspect = 800 / 900;
+  if (maxW / maxH > aspect) {
+    canvas.height = maxH;
+    canvas.width = Math.floor(maxH * aspect);
+  } else {
+    canvas.width = maxW;
+    canvas.height = Math.floor(maxW / aspect);
+  }
+}
+resize();
+window.addEventListener('resize', resize);
+
+// internal logical size
+const W = 800;
+const H = 900;
+function sx(v) { return v * canvas.width / W; }
+function sy(v) { return v * canvas.height / H; }
+
+// ---------- colors ----------
+const COL = {
+  bg:       '#0a0a1a',
+  tile:     '#1a1a2e',
+  tileEdge: '#2a2a4e',
+  cyan:     '#00e5ff',
+  green:    '#00ff88',
+  orange:   '#ff6600',
+  red:      '#ff2244',
+  brown:    '#5c3a1e',
+  darkBrown:'#3d2510',
+  white:    '#ffffff',
+  dimWhite: '#aaaacc',
+};
+
+// ---------- grid ----------
+const COLS = 4;
+const ROWS = 3;
+const TILE_PAD = 12;
+const GRID_X = 40;
+const GRID_Y = 180;
+const GRID_W = W - 80;
+const GRID_H = H - 260;
+const TILE_W = (GRID_W - TILE_PAD * (COLS - 1)) / COLS;
+const TILE_H = (GRID_H - TILE_PAD * (ROWS - 1)) / ROWS;
+
+function tileRect(col, row) {
+  return {
+    x: GRID_X + col * (TILE_W + TILE_PAD),
+    y: GRID_Y + row * (TILE_H + TILE_PAD),
+    w: TILE_W,
+    h: TILE_H,
+  };
+}
+
+// ---------- audio (Web Audio API) ----------
+let audioCtx = null;
+function ensureAudio() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+}
+
+function playPop() {
+  ensureAudio();
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(300, audioCtx.currentTime);
+  osc.frequency.exponentialRampToValueAtTime(120, audioCtx.currentTime + 0.15);
+  gain.gain.setValueAtTime(0.25, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.15);
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start(); osc.stop(audioCtx.currentTime + 0.15);
+}
+
+function playThunk() {
+  ensureAudio();
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = 'square';
+  osc.frequency.setValueAtTime(180, audioCtx.currentTime);
+  osc.frequency.exponentialRampToValueAtTime(60, audioCtx.currentTime + 0.12);
+  gain.gain.setValueAtTime(0.35, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.12);
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start(); osc.stop(audioCtx.currentTime + 0.12);
+
+  // noise burst for impact
+  const bufSize = audioCtx.sampleRate * 0.08;
+  const buf = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < bufSize; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / bufSize);
+  const noise = audioCtx.createBufferSource();
+  noise.buffer = buf;
+  const ng = audioCtx.createGain();
+  ng.gain.setValueAtTime(0.2, audioCtx.currentTime);
+  ng.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.08);
+  noise.connect(ng).connect(audioCtx.destination);
+  noise.start(); noise.stop(audioCtx.currentTime + 0.08);
+}
+
+function playSinkhole() {
+  ensureAudio();
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = 'sawtooth';
+  osc.frequency.setValueAtTime(200, audioCtx.currentTime);
+  osc.frequency.exponentialRampToValueAtTime(80, audioCtx.currentTime + 0.2);
+  gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.2);
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start(); osc.stop(audioCtx.currentTime + 0.2);
+}
+
+function playMiss() {
+  ensureAudio();
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(400, audioCtx.currentTime);
+  osc.frequency.exponentialRampToValueAtTime(200, audioCtx.currentTime + 0.3);
+  gain.gain.setValueAtTime(0.12, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.3);
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start(); osc.stop(audioCtx.currentTime + 0.3);
+}
+
+function playGameOver() {
+  ensureAudio();
+  [200, 160, 120].forEach((freq, i) => {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'square';
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0.2, audioCtx.currentTime + i * 0.2);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + i * 0.2 + 0.3);
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start(audioCtx.currentTime + i * 0.2);
+    osc.stop(audioCtx.currentTime + i * 0.2 + 0.3);
+  });
+}
+
+// ---------- particles ----------
+let particles = [];
+function spawnParticles(px, py, color, count) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 80 + Math.random() * 200;
+    particles.push({
+      x: px, y: py,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: 0.4 + Math.random() * 0.4,
+      maxLife: 0.4 + Math.random() * 0.4,
+      r: 2 + Math.random() * 4,
+      color,
+    });
+  }
+}
+
+function updateParticles(dt) {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.vy += 300 * dt; // gravity
+    p.life -= dt;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+}
+
+function drawParticles() {
+  for (const p of particles) {
+    const a = Math.max(0, p.life / p.maxLife);
+    ctx.globalAlpha = a;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(sx(p.x), sy(p.y), sx(p.r * a), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ---------- floating text ----------
+let floatingTexts = [];
+function spawnFloatingText(px, py, text, color) {
+  floatingTexts.push({ x: px, y: py, text, color, life: 1.0, maxLife: 1.0 });
+}
+
+function updateFloatingTexts(dt) {
+  for (let i = floatingTexts.length - 1; i >= 0; i--) {
+    const ft = floatingTexts[i];
+    ft.y -= 60 * dt;
+    ft.life -= dt;
+    if (ft.life <= 0) floatingTexts.splice(i, 1);
+  }
+}
+
+function drawFloatingTexts() {
+  for (const ft of floatingTexts) {
+    const a = Math.max(0, ft.life / ft.maxLife);
+    ctx.globalAlpha = a;
+    ctx.fillStyle = ft.color;
+    ctx.font = `bold ${sx(28)}px 'Courier New', monospace`;
+    ctx.textAlign = 'center';
+    ctx.fillText(ft.text, sx(ft.x), sy(ft.y));
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ---------- game state ----------
+const STATE = { TITLE: 0, PLAYING: 1, GAMEOVER: 2 };
+let state = STATE.TITLE;
+let score = 0;
+let missed = 0;
+let combo = 0;
+let multiplier = 1;
+let timeLeft = 90;
+let spawnTimer = 0;
+let spawnInterval = 1.4; // seconds between spawns
+let potholes = []; // { col, row, type:'pothole'|'sinkhole', timer, maxTime, phase(0=grow,1=idle,2=shrink), hit:bool }
+let patchEffects = []; // { col, row, timer }
+let titlePulse = 0;
+let shakeTimer = 0;
+let shakeIntensity = 0;
+let highScore = parseInt(localStorage.getItem('whacPotholeHigh') || '0');
+
+// ---------- tile state for road markings ----------
+const roadMarkings = [];
+for (let r = 0; r < ROWS; r++) {
+  for (let c = 0; c < COLS; c++) {
+    roadMarkings.push({
+      col: c, row: r,
+      hasCrack: Math.random() < 0.3,
+      crackAngle: Math.random() * Math.PI,
+      hasDash: Math.random() < 0.4,
+      dashX: 0.3 + Math.random() * 0.4,
+    });
+  }
+}
+
+function resetGame() {
+  score = 0;
+  missed = 0;
+  combo = 0;
+  multiplier = 1;
+  timeLeft = 90;
+  spawnTimer = 0;
+  spawnInterval = 1.4;
+  potholes = [];
+  patchEffects = [];
+  particles = [];
+  floatingTexts = [];
+  shakeTimer = 0;
+}
+
+// ---------- pothole logic ----------
+function spawnPothole() {
+  // find free tiles
+  const occupied = new Set(potholes.map(p => `${p.col},${p.row}`));
+  const free = [];
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++)
+      if (!occupied.has(`${c},${r}`)) free.push({ col: c, row: r });
+  if (free.length === 0) return;
+
+  const spot = free[Math.floor(Math.random() * free.length)];
+  const isSinkhole = Math.random() < 0.15; // 15% chance of sinkhole
+  const visibleTime = isSinkhole ? (1.4 + Math.random() * 0.6) : (2.0 + Math.random() * 1.0);
+
+  potholes.push({
+    col: spot.col,
+    row: spot.row,
+    type: isSinkhole ? 'sinkhole' : 'pothole',
+    timer: 0,
+    growTime: 0.25,
+    idleTime: visibleTime,
+    shrinkTime: 0.2,
+    maxTime: 0.25 + visibleTime + 0.2,
+    phase: 0, // 0=grow, 1=idle, 2=shrink
+    hit: false,
+    scale: 0,
+  });
+
+  if (isSinkhole) playSinkhole(); else playPop();
+}
+
+function updatePotholes(dt) {
+  for (let i = potholes.length - 1; i >= 0; i--) {
+    const p = potholes[i];
+    if (p.hit) {
+      p.timer += dt;
+      if (p.timer > 0.3) potholes.splice(i, 1);
+      continue;
+    }
+
+    p.timer += dt;
+
+    if (p.phase === 0) {
+      p.scale = Math.min(1, p.timer / p.growTime);
+      if (p.timer >= p.growTime) { p.phase = 1; p.timer = 0; }
+    } else if (p.phase === 1) {
+      p.scale = 1;
+      if (p.timer >= p.idleTime) { p.phase = 2; p.timer = 0; }
+    } else {
+      p.scale = Math.max(0, 1 - p.timer / p.shrinkTime);
+      if (p.timer >= p.shrinkTime) {
+        // missed!
+        missed++;
+        combo = 0;
+        multiplier = 1;
+        playMiss();
+        shakeTimer = 0.2;
+        shakeIntensity = 4;
+        const tr = tileRect(p.col, p.row);
+        spawnFloatingText(tr.x + tr.w / 2, tr.y + tr.h / 2, 'MISS', COL.red);
+        potholes.splice(i, 1);
+      }
+    }
+  }
+}
+
+function hitPothole(col, row) {
+  for (let i = potholes.length - 1; i >= 0; i--) {
+    const p = potholes[i];
+    if (p.col === col && p.row === row && !p.hit && p.phase < 2) {
+      p.hit = true;
+      p.timer = 0;
+
+      combo++;
+      if (combo >= 10) multiplier = 4;
+      else if (combo >= 6) multiplier = 3;
+      else if (combo >= 3) multiplier = 2;
+      else multiplier = 1;
+
+      const basePoints = p.type === 'sinkhole' ? 25 : 10;
+      const points = basePoints * multiplier;
+      score += points;
+
+      const tr = tileRect(col, row);
+      const cx = tr.x + tr.w / 2;
+      const cy = tr.y + tr.h / 2;
+
+      playThunk();
+      spawnParticles(cx, cy, COL.green, 16);
+      spawnParticles(cx, cy, COL.cyan, 8);
+      const txt = multiplier > 1 ? `+${points} x${multiplier}` : `+${points}`;
+      spawnFloatingText(cx, cy - 20, txt, p.type === 'sinkhole' ? COL.orange : COL.green);
+
+      patchEffects.push({ col, row, timer: 0 });
+      return true;
+    }
+  }
+  return false;
+}
+
+function updatePatchEffects(dt) {
+  for (let i = patchEffects.length - 1; i >= 0; i--) {
+    patchEffects[i].timer += dt;
+    if (patchEffects[i].timer > 0.5) patchEffects.splice(i, 1);
+  }
+}
+
+// ---------- drawing ----------
+function drawRoundedRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+function drawTiles() {
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const t = tileRect(c, r);
+      const tx = sx(t.x), ty = sy(t.y), tw = sx(t.w), th = sy(t.h);
+
+      // tile shadow
+      ctx.fillStyle = 'rgba(0,0,0,0.4)';
+      drawRoundedRect(tx + sx(3), ty + sy(3), tw, th, sx(8));
+      ctx.fill();
+
+      // tile base
+      ctx.fillStyle = COL.tile;
+      drawRoundedRect(tx, ty, tw, th, sx(8));
+      ctx.fill();
+
+      // subtle border
+      ctx.strokeStyle = COL.tileEdge;
+      ctx.lineWidth = sx(1.5);
+      drawRoundedRect(tx, ty, tw, th, sx(8));
+      ctx.stroke();
+
+      // road texture - subtle noise lines
+      ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+      ctx.lineWidth = sx(1);
+      for (let li = 0; li < 3; li++) {
+        const ly = ty + th * (0.25 + li * 0.25);
+        ctx.beginPath();
+        ctx.moveTo(tx + sx(10), ly);
+        ctx.lineTo(tx + tw - sx(10), ly);
+        ctx.stroke();
+      }
+
+      // road markings
+      const mark = roadMarkings.find(m => m.col === c && m.row === r);
+      if (mark && mark.hasDash) {
+        ctx.strokeStyle = 'rgba(255,255,100,0.08)';
+        ctx.lineWidth = sx(3);
+        ctx.setLineDash([sx(8), sx(12)]);
+        const dashY = ty + th / 2;
+        ctx.beginPath();
+        ctx.moveTo(tx + sx(15), dashY);
+        ctx.lineTo(tx + tw - sx(15), dashY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      // patch effect glow
+      const patch = patchEffects.find(pe => pe.col === c && pe.row === r);
+      if (patch) {
+        const pa = 1 - patch.timer / 0.5;
+        ctx.fillStyle = `rgba(0,255,136,${0.3 * pa})`;
+        drawRoundedRect(tx, ty, tw, th, sx(8));
+        ctx.fill();
+      }
+    }
+  }
+}
+
+function drawPotholes() {
+  for (const p of potholes) {
+    const t = tileRect(p.col, p.row);
+    const cx = sx(t.x + t.w / 2);
+    const cy = sy(t.y + t.h / 2);
+    const baseRadius = p.type === 'sinkhole' ? Math.min(t.w, t.h) * 0.42 : Math.min(t.w, t.h) * 0.32;
+    const r = sx(baseRadius * (p.hit ? Math.max(0, 1 - p.timer / 0.3) : p.scale));
+
+    if (r <= 0) continue;
+
+    if (p.hit) {
+      // patching animation — green fill closing in
+      ctx.fillStyle = COL.green;
+      ctx.globalAlpha = 1 - p.timer / 0.3;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r * 1.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      continue;
+    }
+
+    // glow
+    const glowColor = p.type === 'sinkhole' ? 'rgba(255,34,68,0.25)' : 'rgba(255,102,0,0.15)';
+    const grad = ctx.createRadialGradient(cx, cy, r * 0.3, cx, cy, r * 1.8);
+    grad.addColorStop(0, glowColor);
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r * 1.8, 0, Math.PI * 2);
+    ctx.fill();
+
+    // pothole outer ring
+    ctx.fillStyle = p.type === 'sinkhole' ? '#4a1020' : COL.darkBrown;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+
+    // pothole inner
+    const innerGrad = ctx.createRadialGradient(cx - r * 0.15, cy - r * 0.15, 0, cx, cy, r * 0.85);
+    if (p.type === 'sinkhole') {
+      innerGrad.addColorStop(0, '#220008');
+      innerGrad.addColorStop(0.7, '#3a0818');
+      innerGrad.addColorStop(1, '#5a1828');
+    } else {
+      innerGrad.addColorStop(0, '#1a0c04');
+      innerGrad.addColorStop(0.7, '#2d1808');
+      innerGrad.addColorStop(1, '#4a2a10');
+    }
+    ctx.fillStyle = innerGrad;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r * 0.85, 0, Math.PI * 2);
+    ctx.fill();
+
+    // jagged edge detail
+    ctx.strokeStyle = p.type === 'sinkhole' ? 'rgba(255,34,68,0.5)' : 'rgba(255,102,0,0.3)';
+    ctx.lineWidth = sx(2);
+    ctx.beginPath();
+    const segments = 20;
+    for (let s = 0; s <= segments; s++) {
+      const a = (s / segments) * Math.PI * 2;
+      const jr = r * (0.88 + Math.sin(a * 5 + p.timer * 3) * 0.06);
+      const jx = cx + Math.cos(a) * jr;
+      const jy = cy + Math.sin(a) * jr;
+      if (s === 0) ctx.moveTo(jx, jy); else ctx.lineTo(jx, jy);
+    }
+    ctx.stroke();
+
+    // pulsing ring for sinkholes
+    if (p.type === 'sinkhole') {
+      const pulse = 0.5 + Math.sin(p.timer * 8) * 0.5;
+      ctx.strokeStyle = `rgba(255,34,68,${0.4 * pulse})`;
+      ctx.lineWidth = sx(2.5);
+      ctx.beginPath();
+      ctx.arc(cx, cy, r * (1.1 + pulse * 0.15), 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+}
+
+function drawHUD() {
+  // top bar background
+  ctx.fillStyle = 'rgba(10,10,26,0.85)';
+  ctx.fillRect(0, 0, sx(W), sy(60));
+  ctx.strokeStyle = COL.cyan;
+  ctx.lineWidth = sx(1);
+  ctx.beginPath();
+  ctx.moveTo(0, sy(60));
+  ctx.lineTo(sx(W), sy(60));
+  ctx.stroke();
+
+  // score
+  ctx.fillStyle = COL.cyan;
+  ctx.font = `bold ${sx(26)}px 'Courier New', monospace`;
+  ctx.textAlign = 'left';
+  ctx.fillText(`SCORE: ${score}`, sx(20), sy(40));
+
+  // timer
+  ctx.textAlign = 'center';
+  const timerColor = timeLeft <= 15 ? COL.red : timeLeft <= 30 ? COL.orange : COL.green;
+  ctx.fillStyle = timerColor;
+  ctx.fillText(`${Math.ceil(timeLeft)}s`, sx(W / 2), sy(40));
+
+  // missed counter
+  ctx.textAlign = 'right';
+  ctx.fillStyle = missed >= 7 ? COL.red : COL.orange;
+  ctx.fillText(`MISSED: ${missed}/10`, sx(W - 20), sy(40));
+
+  // second row: combo / multiplier
+  if (combo > 0) {
+    ctx.fillStyle = COL.green;
+    ctx.font = `bold ${sx(18)}px 'Courier New', monospace`;
+    ctx.textAlign = 'left';
+    ctx.fillText(`COMBO: ${combo}`, sx(20), sy(80));
+  }
+  if (multiplier > 1) {
+    ctx.fillStyle = COL.orange;
+    ctx.font = `bold ${sx(22)}px 'Courier New', monospace`;
+    ctx.textAlign = 'right';
+    ctx.fillText(`x${multiplier} MULTIPLIER`, sx(W - 20), sy(80));
+  }
+
+  // missed pips visual
+  const pipY = sy(100);
+  const pipSize = sx(10);
+  const pipGap = sx(5);
+  const totalPipW = 10 * (pipSize + pipGap) - pipGap;
+  const pipStartX = sx(W / 2) - totalPipW / 2;
+  for (let i = 0; i < 10; i++) {
+    const px = pipStartX + i * (pipSize + pipGap);
+    if (i < missed) {
+      ctx.fillStyle = COL.red;
+    } else {
+      ctx.fillStyle = 'rgba(255,255,255,0.1)';
+    }
+    ctx.fillRect(px, pipY, pipSize, pipSize);
+  }
+
+  // bottom info
+  ctx.fillStyle = COL.dimWhite;
+  ctx.font = `${sx(14)}px 'Courier New', monospace`;
+  ctx.textAlign = 'center';
+  ctx.fillText('CLICK / TAP POTHOLES TO PATCH THEM', sx(W / 2), sy(H - 30));
+}
+
+function drawTitleScreen(t) {
+  // background
+  ctx.fillStyle = COL.bg;
+  ctx.fillRect(0, 0, sx(W), sy(H));
+
+  // decorative road tiles (dim)
+  ctx.globalAlpha = 0.3;
+  drawTiles();
+  ctx.globalAlpha = 1;
+
+  // title glow
+  const pulse = 0.7 + Math.sin(t * 3) * 0.3;
+
+  // title shadow
+  ctx.fillStyle = 'rgba(0,229,255,0.1)';
+  ctx.font = `bold ${sx(62)}px 'Courier New', monospace`;
+  ctx.textAlign = 'center';
+  ctx.fillText('WHAC-A-POTHOLE', sx(W / 2 + 3), sy(260 + 3));
+
+  // title
+  ctx.fillStyle = COL.cyan;
+  ctx.shadowColor = COL.cyan;
+  ctx.shadowBlur = sx(20 * pulse);
+  ctx.fillText('WHAC-A-POTHOLE', sx(W / 2), sy(260));
+  ctx.shadowBlur = 0;
+
+  // subtitle
+  ctx.fillStyle = COL.orange;
+  ctx.font = `bold ${sx(22)}px 'Courier New', monospace`;
+  ctx.fillText('INFRASTRUCTURE DEFENSE UNIT', sx(W / 2), sy(310));
+
+  // instructions
+  ctx.fillStyle = COL.dimWhite;
+  ctx.font = `${sx(18)}px 'Courier New', monospace`;
+  const lines = [
+    'POTHOLES APPEAR ON THE ROAD GRID',
+    'CLICK / TAP TO PATCH THEM FAST',
+    'SINKHOLES (RED) ARE WORTH MORE',
+    'MISS 10 AND ITS GAME OVER',
+    '',
+    '90 SECOND ROUNDS - BEAT YOUR BEST!',
+  ];
+  lines.forEach((line, i) => {
+    ctx.fillText(line, sx(W / 2), sy(390 + i * 30));
+  });
+
+  // high score
+  if (highScore > 0) {
+    ctx.fillStyle = COL.green;
+    ctx.font = `bold ${sx(22)}px 'Courier New', monospace`;
+    ctx.fillText(`HIGH SCORE: ${highScore}`, sx(W / 2), sy(590));
+  }
+
+  // start prompt
+  const promptAlpha = 0.5 + Math.sin(t * 5) * 0.5;
+  ctx.globalAlpha = promptAlpha;
+  ctx.fillStyle = COL.green;
+  ctx.font = `bold ${sx(28)}px 'Courier New', monospace`;
+  ctx.fillText('PRESS ENTER OR CLICK TO START', sx(W / 2), sy(670));
+  ctx.globalAlpha = 1;
+
+  // version
+  ctx.fillStyle = 'rgba(255,255,255,0.2)';
+  ctx.font = `${sx(12)}px 'Courier New', monospace`;
+  ctx.fillText('CYVL.WORLD ARCADE v1.0', sx(W / 2), sy(H - 20));
+}
+
+function drawGameOverScreen(t) {
+  // dim background
+  ctx.fillStyle = 'rgba(10,10,26,0.85)';
+  ctx.fillRect(0, 0, sx(W), sy(H));
+
+  // game over title
+  const pulse = 0.7 + Math.sin(t * 4) * 0.3;
+  ctx.fillStyle = COL.red;
+  ctx.shadowColor = COL.red;
+  ctx.shadowBlur = sx(15 * pulse);
+  ctx.font = `bold ${sx(56)}px 'Courier New', monospace`;
+  ctx.textAlign = 'center';
+  ctx.fillText('GAME OVER', sx(W / 2), sy(280));
+  ctx.shadowBlur = 0;
+
+  // reason
+  ctx.fillStyle = COL.dimWhite;
+  ctx.font = `${sx(20)}px 'Courier New', monospace`;
+  if (missed >= 10) {
+    ctx.fillText('TOO MANY POTHOLES MISSED!', sx(W / 2), sy(330));
+  } else {
+    ctx.fillText('TIME IS UP!', sx(W / 2), sy(330));
+  }
+
+  // final score box
+  ctx.strokeStyle = COL.cyan;
+  ctx.lineWidth = sx(2);
+  drawRoundedRect(sx(200), sy(370), sx(400), sy(140), sx(12));
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(0,229,255,0.05)';
+  drawRoundedRect(sx(200), sy(370), sx(400), sy(140), sx(12));
+  ctx.fill();
+
+  ctx.fillStyle = COL.dimWhite;
+  ctx.font = `${sx(18)}px 'Courier New', monospace`;
+  ctx.fillText('FINAL SCORE', sx(W / 2), sy(410));
+
+  ctx.fillStyle = COL.cyan;
+  ctx.font = `bold ${sx(52)}px 'Courier New', monospace`;
+  ctx.fillText(`${score}`, sx(W / 2), sy(475));
+
+  // high score
+  const isNew = score > 0 && score >= highScore;
+  if (isNew) {
+    ctx.fillStyle = COL.green;
+    ctx.font = `bold ${sx(24)}px 'Courier New', monospace`;
+    ctx.fillText('NEW HIGH SCORE!', sx(W / 2), sy(550));
+  } else if (highScore > 0) {
+    ctx.fillStyle = COL.dimWhite;
+    ctx.font = `${sx(18)}px 'Courier New', monospace`;
+    ctx.fillText(`HIGH SCORE: ${highScore}`, sx(W / 2), sy(550));
+  }
+
+  // retry prompt
+  const promptAlpha = 0.5 + Math.sin(t * 5) * 0.5;
+  ctx.globalAlpha = promptAlpha;
+  ctx.fillStyle = COL.green;
+  ctx.font = `bold ${sx(26)}px 'Courier New', monospace`;
+  ctx.fillText('PRESS ENTER OR CLICK TO RETRY', sx(W / 2), sy(640));
+  ctx.globalAlpha = 1;
+}
+
+// ---------- main loop ----------
+let lastTime = 0;
+let totalTime = 0;
+
+function frame(now) {
+  requestAnimationFrame(frame);
+
+  const dt = Math.min((now - lastTime) / 1000, 0.1);
+  lastTime = now;
+  totalTime += dt;
+
+  // clear
+  ctx.fillStyle = COL.bg;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  if (state === STATE.TITLE) {
+    drawTitleScreen(totalTime);
+    return;
+  }
+
+  if (state === STATE.GAMEOVER) {
+    // draw game in background
+    drawBackground();
+    drawGameOverScreen(totalTime);
+    return;
+  }
+
+  // ---------- PLAYING ----------
+  // update timers
+  timeLeft -= dt;
+  if (timeLeft <= 0) { timeLeft = 0; endGame(); return; }
+  if (missed >= 10) { endGame(); return; }
+
+  // difficulty ramp — spawn interval decreases over time
+  const elapsed = 90 - timeLeft;
+  spawnInterval = Math.max(0.6, 1.4 - elapsed * 0.008);
+
+  // spawn logic
+  spawnTimer += dt;
+  if (spawnTimer >= spawnInterval) {
+    spawnTimer = 0;
+    spawnPothole();
+    // occasional double spawn after 30 seconds
+    if (elapsed > 30 && Math.random() < 0.3) {
+      setTimeout(() => { if (state === STATE.PLAYING) spawnPothole(); }, 200);
+    }
+  }
+
+  // update entities
+  updatePotholes(dt);
+  updatePatchEffects(dt);
+  updateParticles(dt);
+  updateFloatingTexts(dt);
+
+  // screen shake
+  if (shakeTimer > 0) {
+    shakeTimer -= dt;
+    const ox = (Math.random() - 0.5) * shakeIntensity * 2;
+    const oy = (Math.random() - 0.5) * shakeIntensity * 2;
+    ctx.save();
+    ctx.translate(sx(ox), sy(oy));
+  }
+
+  drawBackground();
+
+  if (shakeTimer > 0) ctx.restore();
+}
+
+function drawBackground() {
+  drawTiles();
+  drawPotholes();
+  drawParticles();
+  drawFloatingTexts();
+  drawHUD();
+}
+
+function endGame() {
+  state = STATE.GAMEOVER;
+  if (score > highScore) {
+    highScore = score;
+    localStorage.setItem('whacPotholeHigh', String(highScore));
+  }
+  playGameOver();
+}
+
+// ---------- input ----------
+function getGridCell(clientX, clientY) {
+  const rect = canvas.getBoundingClientRect();
+  const mx = (clientX - rect.left) / canvas.width * W;
+  const my = (clientY - rect.top) / canvas.height * H;
+
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const t = tileRect(c, r);
+      if (mx >= t.x && mx <= t.x + t.w && my >= t.y && my <= t.y + t.h) {
+        return { col: c, row: r };
+      }
+    }
+  }
+  return null;
+}
+
+function handleClick(clientX, clientY) {
+  ensureAudio();
+
+  if (state === STATE.TITLE) {
+    resetGame();
+    state = STATE.PLAYING;
+    return;
+  }
+
+  if (state === STATE.GAMEOVER) {
+    resetGame();
+    state = STATE.PLAYING;
+    return;
+  }
+
+  if (state === STATE.PLAYING) {
+    const cell = getGridCell(clientX, clientY);
+    if (cell) {
+      hitPothole(cell.col, cell.row);
+    }
+  }
+}
+
+canvas.addEventListener('mousedown', (e) => { handleClick(e.clientX, e.clientY); });
+canvas.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  if (e.touches.length > 0) handleClick(e.touches[0].clientX, e.touches[0].clientY);
+}, { passive: false });
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    ensureAudio();
+    if (state === STATE.TITLE) { resetGame(); state = STATE.PLAYING; }
+    else if (state === STATE.GAMEOVER) { resetGame(); state = STATE.PLAYING; }
+  }
+});
+
+// ---------- start ----------
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

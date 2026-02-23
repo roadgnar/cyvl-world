@@ -11,6 +11,51 @@ var ARCADE_GAMES = [
     path: '/games/infrastructure-wars/',
     tags: ['SHOOTER', 'ACTION', 'DESKTOP'],
     colors: { primary: '#00e5ff', secondary: '#00ff88', accent: '#ff6600' }
+  },
+  {
+    id: 'whac-a-pothole',
+    title: 'WHAC-A-POTHOLE',
+    subtitle: 'Infrastructure Defense Unit',
+    description: 'Potholes are popping up everywhere! Click fast to patch them before the roads crumble.',
+    path: '/games/whac-a-pothole/',
+    tags: ['ARCADE', 'CASUAL'],
+    colors: { primary: '#ff6600', secondary: '#00ff88', accent: '#00e5ff' }
+  },
+  {
+    id: 'hangman',
+    title: 'INFRASTRUCTURE HANGMAN',
+    subtitle: 'Save the Bridge',
+    description: 'Guess infrastructure words before the bridge collapses. 8 guesses. No hard hats required.',
+    path: '/games/hangman/',
+    tags: ['WORD', 'CASUAL'],
+    colors: { primary: '#00e5ff', secondary: '#ff2244', accent: '#00ff88' }
+  },
+  {
+    id: 'road-invaders',
+    title: 'ROAD INVADERS',
+    subtitle: 'Defend the Pavement',
+    description: 'Waves of potholes, cones, and paperwork descend from above. Blast them with asphalt patches!',
+    path: '/games/road-invaders/',
+    tags: ['SHOOTER', 'CLASSIC'],
+    colors: { primary: '#aa44ff', secondary: '#ff6600', accent: '#00e5ff' }
+  },
+  {
+    id: 'fiber-snake',
+    title: 'FIBER SNAKE',
+    subtitle: 'Lay the Line',
+    description: 'Lay fiber optic cable through the city grid. Collect data nodes. Don\'t cross your own line.',
+    path: '/games/fiber-snake/',
+    tags: ['CLASSIC', 'CASUAL'],
+    colors: { primary: '#00e5ff', secondary: '#00ff88', accent: '#ffd700' }
+  },
+  {
+    id: 'cone-crusher',
+    title: 'CONE CRUSHER',
+    subtitle: 'Infrastructure Demolition',
+    description: 'Smash through traffic cones, barriers, and signs with your wrecking ball. 5 levels of breakout.',
+    path: '/games/cone-crusher/',
+    tags: ['ARCADE', 'CLASSIC'],
+    colors: { primary: '#ff6600', secondary: '#ffee00', accent: '#00e5ff' }
   }
 ];
 
