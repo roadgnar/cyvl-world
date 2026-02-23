@@ -56,6 +56,15 @@ var ARCADE_GAMES = [
     path: '/games/cone-crusher/',
     tags: ['ARCADE', 'CLASSIC'],
     colors: { primary: '#ff6600', secondary: '#ffee00', accent: '#00e5ff' }
+  },
+  {
+    id: 'road-reckoning',
+    title: 'ROAD RECKONING',
+    subtitle: 'Pavement Strike Force',
+    description: 'QA annotation gamification. Eliminate bad labels, discover missing objects, reclassify errors. 4 modes.',
+    path: '/games/road-reckoning/',
+    tags: ['STRATEGY', 'QA', 'DESKTOP'],
+    colors: { primary: '#00e5ff', secondary: '#ff2244', accent: '#00ff88' }
   }
 ];
 
