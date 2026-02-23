@@ -345,8 +345,11 @@ function screenToWorld(sx, sy) {
 // DATA LOADING & PROCESSING
 // ============================================================
 function loadData() {
-  fetch('data.json')
-    .then(r => r.json())
+  fetch('/games/somerville-siege/data.json')
+    .then(r => {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    })
     .then(data => {
       gameData = data;
       processData();
@@ -354,6 +357,7 @@ function loadData() {
     })
     .catch(err => {
       loadError = 'Failed to load data: ' + err.message;
+      console.error('Somerville Siege load error:', err);
     });
 }
 
@@ -473,6 +477,9 @@ function renderMinimapBase() {
 // ============================================================
 // INPUT HANDLING
 // ============================================================
+// Disable arcade-nav ESC redirect during gameplay
+window.ARCADE_NAV_DISABLE_ESC = true;
+
 document.addEventListener('keydown', e => {
   keys[e.key.toLowerCase()] = true;
   keys[e.code] = true;

@@ -2174,6 +2174,9 @@ document.getElementById('btn-leaderboard').addEventListener('click', () => {
   }
 });
 
+// Disable arcade-nav ESC redirect during gameplay
+window.ARCADE_NAV_DISABLE_ESC = true;
+
 // Pause
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {

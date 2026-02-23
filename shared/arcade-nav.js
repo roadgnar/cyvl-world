@@ -17,6 +17,6 @@
   });
 
   document.addEventListener('keydown', function(e) {
-    if (e.code === 'Escape') window.location.href = '/';
+    if (e.code === 'Escape' && !window.ARCADE_NAV_DISABLE_ESC) window.location.href = '/';
   });
 })();
