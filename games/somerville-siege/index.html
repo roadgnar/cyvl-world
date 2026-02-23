@@ -70,6 +70,19 @@ canvas#scene {
 // A real-data driven infrastructure defense game
 // ============================================================
 
+// Global error handler — show errors visually
+window.onerror = function(msg, url, line, col, err) {
+  var el = document.getElementById('error-overlay');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'error-overlay';
+    el.style.cssText = 'position:fixed;top:0;left:0;right:0;padding:20px;background:#220000;color:#ff4444;font:14px monospace;z-index:99999;white-space:pre-wrap;border-bottom:2px solid #ff4444;';
+    document.body.appendChild(el);
+  }
+  el.textContent += 'ERROR: ' + msg + '\nLine: ' + line + ', Col: ' + col + '\n\n';
+  return false;
+};
+
 const canvas = document.getElementById('scene');
 const ctx = canvas.getContext('2d');
 const CW = 1024, CH = 700;
@@ -172,7 +185,9 @@ const roadGrid = {};
 let audioCtx = null;
 function initAudio() {
   if (!audioCtx) {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    } catch(e) { /* audio not available */ }
   }
 }
 
@@ -344,19 +359,25 @@ function screenToWorld(sx, sy) {
 // ============================================================
 // DATA LOADING & PROCESSING
 // ============================================================
+let loadStage = 'Starting fetch...';
 function loadData() {
+  loadStage = 'Fetching data.json...';
   fetch('/games/somerville-siege/data.json')
     .then(r => {
+      loadStage = 'Got response: ' + r.status;
       if (!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
     })
     .then(data => {
+      loadStage = 'Parsing JSON... (' + JSON.stringify(data).length + ' bytes)';
       gameData = data;
+      loadStage = 'Processing roads...';
       processData();
+      loadStage = 'Done!';
       screen = SCREENS.TITLE;
     })
     .catch(err => {
-      loadError = 'Failed to load data: ' + err.message;
+      loadError = 'Failed to load (' + loadStage + '): ' + err.message;
       console.error('Somerville Siege load error:', err);
     });
 }
@@ -1539,17 +1560,24 @@ function drawLoading() {
   ctx.font = '24px "Courier New", monospace';
   ctx.textAlign = 'center';
   ctx.fillText('LOADING INFRASTRUCTURE DATA...', CW / 2, CH / 2 - 20);
+  // Show load stage
+  ctx.fillStyle = '#00e5ff88';
+  ctx.font = '12px "Courier New", monospace';
+  ctx.fillText(loadStage, CW / 2, CH / 2 + 10);
   if (loadError) {
     ctx.fillStyle = '#ff2244';
-    ctx.font = '16px "Courier New", monospace';
-    ctx.fillText(loadError, CW / 2, CH / 2 + 20);
+    ctx.font = '14px "Courier New", monospace';
+    ctx.fillText(loadError, CW / 2, CH / 2 + 35);
+    ctx.fillStyle = '#ff224488';
+    ctx.font = '12px "Courier New", monospace';
+    ctx.fillText('Try refreshing the page (Ctrl+Shift+R)', CW / 2, CH / 2 + 60);
   }
   // Spinner
   const t = performance.now() / 1000;
   ctx.strokeStyle = '#00e5ff';
   ctx.lineWidth = 3;
   ctx.beginPath();
-  ctx.arc(CW / 2, CH / 2 + 40, 15, t * 3, t * 3 + Math.PI * 1.5);
+  ctx.arc(CW / 2, CH / 2 + 80, 15, t * 3, t * 3 + Math.PI * 1.5);
   ctx.stroke();
 }
 
@@ -2610,38 +2638,56 @@ function drawDebrief() {
 function gameLoop(timestamp) {
   requestAnimationFrame(gameLoop);
 
-  dt = Math.min((timestamp - lastTime) / 1000, 0.05);
-  lastTime = timestamp;
-  frameCount++;
+  try {
+    dt = Math.min((timestamp - lastTime) / 1000, 0.05);
+    lastTime = timestamp;
+    frameCount++;
 
-  switch (screen) {
-    case SCREENS.LOADING:
-      drawLoading();
-      break;
-    case SCREENS.TITLE:
-      updateTitle(dt);
-      drawTitle();
-      break;
-    case SCREENS.BRIEFING:
-      updateBriefing(dt);
-      drawBriefing();
-      break;
-    case SCREENS.DEPLOY:
-      updateDeploy(dt);
-      drawDeploy();
-      break;
-    case SCREENS.GAMEPLAY:
-      updateGameplay(dt);
-      drawGameplay();
-      break;
-    case SCREENS.PAUSED:
-      // Draw gameplay frozen
-      drawGameplay();
-      drawPauseOverlay();
-      break;
-    case SCREENS.DEBRIEF:
-      drawDebrief();
-      break;
+    switch (screen) {
+      case SCREENS.LOADING:
+        drawLoading();
+        break;
+      case SCREENS.TITLE:
+        updateTitle(dt);
+        drawTitle();
+        break;
+      case SCREENS.BRIEFING:
+        updateBriefing(dt);
+        drawBriefing();
+        break;
+      case SCREENS.DEPLOY:
+        updateDeploy(dt);
+        drawDeploy();
+        break;
+      case SCREENS.GAMEPLAY:
+        updateGameplay(dt);
+        drawGameplay();
+        break;
+      case SCREENS.PAUSED:
+        // Draw gameplay frozen
+        drawGameplay();
+        drawPauseOverlay();
+        break;
+      case SCREENS.DEBRIEF:
+        drawDebrief();
+        break;
+    }
+  } catch(e) {
+    // Show error on canvas
+    ctx.fillStyle = '#0a0a1a';
+    ctx.fillRect(0, 0, CW, CH);
+    ctx.fillStyle = '#ff2244';
+    ctx.font = 'bold 20px "Courier New", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('GAME ERROR', CW / 2, CH / 2 - 40);
+    ctx.fillStyle = '#ff8888';
+    ctx.font = '14px "Courier New", monospace';
+    ctx.fillText(e.message, CW / 2, CH / 2);
+    ctx.fillText('Screen: ' + screen + ' Frame: ' + frameCount, CW / 2, CH / 2 + 25);
+    ctx.fillStyle = '#ffffff44';
+    ctx.font = '12px "Courier New", monospace';
+    ctx.fillText('Check browser console (F12) for details', CW / 2, CH / 2 + 55);
+    console.error('Game loop error:', e);
   }
 }
 
