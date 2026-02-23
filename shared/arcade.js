@@ -70,7 +70,7 @@ var ARCADE_GAMES = [
     id: 'somerville-siege',
     title: 'SOMERVILLE SIEGE',
     subtitle: 'Infrastructure Defense',
-    description: 'Defend Somerville\\'s real roads from infrastructure decay. 500 real streets, actual PCI data, 5 waves of chaos.',
+    description: 'Defend Somerville\'s real roads from infrastructure decay. 500 real streets, actual PCI data, 5 waves of chaos.',
     path: '/games/somerville-siege/',
     tags: ['ACTION', 'REAL DATA', 'DESKTOP'],
     colors: { primary: '#00e5ff', secondary: '#ff2244', accent: '#00ff88' }
