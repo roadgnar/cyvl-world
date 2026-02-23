@@ -98,6 +98,11 @@ let gameData = null;
 let worldRoads = [];
 let worldDistresses = [];
 let worldSigns = [];
+let worldAGAs = [];
+let worldStriping = [];
+let cityInsights = {};
+const agaGrid = {};
+const stripingGrid = {};
 let loadError = null;
 
 // Timing
@@ -126,7 +131,9 @@ const player = {
   scanCooldown: 0, scanCooldownMax: 5,
   droneCooldown: 0, droneCooldownMax: 15,
   maxDrones: 3, invulnTime: 0,
-  speedBoost: 0, freezeTime: 0, scanRevealTime: 0
+  speedBoost: 0, freezeTime: 0, scanRevealTime: 0,
+  cctvNetworkTime: 0, cctvCooldown: 0, cctvCooldownMax: 30,
+  shieldTime: 0, onStripingType: null
 };
 
 // Game vars
@@ -197,6 +204,19 @@ let flashLabel = '';
 
 // Collected sign images for debrief
 let collectedSignImages = []; // [{img, mutcd, cat}]
+
+// Sign challenge system
+let signChallenge = null; // {img, correctCat, options, timer, chosen, result, powerup, sign}
+let signChallengeActive = false;
+
+// Infrastructure Health Score tracking
+let sealedManholes = 0;
+let totalManholes = 0;
+let goodStriping = 0;
+let totalStripingCount = 0;
+let liberatedTrees = 0;
+let totalTrees = 0;
+let cityIHS = 0;
 
 function getOrLoadImage(url) {
   if (!url) return null;
@@ -554,6 +574,57 @@ function processData() {
     return { x: wx, y: wy, mutcd: s.m, cat: s.cat, img: s.img || null };
   });
 
+  // Process AGAs (manholes, trees, CCTV)
+  worldAGAs = (gameData.agas || []).map(a => {
+    const [wx, wy] = lngLatToWorld(a.x, a.y);
+    return {
+      x: wx, y: wy, type: a.t, img: a.img || null,
+      sealed: false, sealProgress: 0, liberated: false,
+      hp: a.t === 'T' ? 80 : 50,
+      maxHp: a.t === 'T' ? 80 : 50,
+      spawnTimer: 0, active: false
+    };
+  });
+  // Build AGA spatial grid
+  for (let i = 0; i < worldAGAs.length; i++) {
+    const a = worldAGAs[i];
+    const gx = Math.floor(a.x / GRID_CELL);
+    const gy = Math.floor(a.y / GRID_CELL);
+    const key = gx + ',' + gy;
+    if (!agaGrid[key]) agaGrid[key] = [];
+    agaGrid[key].push(i);
+  }
+  totalManholes = worldAGAs.filter(a => a.type === 'M').length;
+  totalTrees = worldAGAs.filter(a => a.type === 'T').length;
+
+  // Process striping
+  worldStriping = (gameData.striping || []).map(s => {
+    if (s.c) {
+      const coords = s.c.map(c => lngLatToWorld(c[0], c[1]));
+      return { coords, type: s.t, cond: s.cond, isLine: true, faded: s.cond === 'P' || s.cond === 'N' };
+    } else {
+      const [wx, wy] = lngLatToWorld(s.x, s.y);
+      return { x: wx, y: wy, type: s.t, cond: s.cond, isLine: false, faded: s.cond === 'P' || s.cond === 'N' };
+    }
+  });
+  // Build striping spatial grid (lines only)
+  for (let i = 0; i < worldStriping.length; i++) {
+    const s = worldStriping[i];
+    if (!s.isLine) continue;
+    for (let j = 0; j < s.coords.length; j++) {
+      const gx = Math.floor(s.coords[j][0] / GRID_CELL);
+      const gy = Math.floor(s.coords[j][1] / GRID_CELL);
+      const key = gx + ',' + gy;
+      if (!stripingGrid[key]) stripingGrid[key] = [];
+      if (!stripingGrid[key].includes(i)) stripingGrid[key].push(i);
+    }
+  }
+  totalStripingCount = worldStriping.length;
+  goodStriping = worldStriping.filter(s => s.cond === 'G').length;
+
+  // Store city insights
+  cityInsights = gameData.insights || {};
+
   // Build minimap
   buildMinimap();
 
@@ -642,6 +713,7 @@ document.addEventListener('keydown', e => {
   }
   if (screen === SCREENS.TITLE && (e.key === 'Enter' || e.key === ' ')) {
     initAudio();
+    buildBriefingText();
     screen = SCREENS.BRIEFING;
     briefingIndex = 0;
     briefingTimer = 0;
@@ -681,6 +753,24 @@ document.addEventListener('keydown', e => {
   if (screen === SCREENS.GAMEPLAY && e.key === ' ') {
     fireScanPulse();
     e.preventDefault();
+  }
+  // CCTV network scan (Q key)
+  if (screen === SCREENS.GAMEPLAY && e.key.toLowerCase() === 'q') {
+    if (player.cctvCooldown <= 0 && player.cctvNetworkTime <= 0) {
+      player.cctvCooldown = player.cctvCooldownMax;
+      player.cctvNetworkTime = 15;
+      playSound('scan');
+      activePowerups.push({ type: 'CCTV', time: 15, color: '#00e5ff' });
+      for (const a of worldAGAs) {
+        if (a.type === 'C') spawnParticles(a.x, a.y, '#00e5ff', 8, 80, 0.5);
+      }
+    }
+  }
+  // Sign challenge input (1, 2, 3)
+  if (signChallengeActive && signChallenge && !signChallenge.result) {
+    if (e.key === '1') resolveSignChallenge(0);
+    if (e.key === '2') resolveSignChallenge(1);
+    if (e.key === '3') resolveSignChallenge(2);
   }
 });
 
@@ -761,6 +851,21 @@ function startGameplay() {
   flashImg = null;
   flashTimer = 0;
   collectedSignImages = [];
+  signChallenge = null;
+  signChallengeActive = false;
+  // Reset infrastructure state
+  sealedManholes = 0;
+  liberatedTrees = 0;
+  goodStriping = worldStriping.filter(s => s.cond === 'G').length;
+  for (const a of worldAGAs) {
+    a.sealed = false; a.sealProgress = 0; a.liberated = false;
+    a.active = false; a.spawnTimer = 0;
+  }
+  for (const s of worldStriping) { s.faded = s.cond === 'P' || s.cond === 'N'; }
+  player.cctvNetworkTime = 0;
+  player.cctvCooldown = 0;
+  player.shieldTime = 0;
+  player.onStripingType = null;
   player.hp = player.maxHp;
   player.energy = player.maxEnergy;
   player.scanCooldown = 0;
@@ -791,10 +896,12 @@ function startGameplay() {
 }
 
 function restartGame() {
+  buildBriefingText();
   screen = SCREENS.BRIEFING;
   briefingIndex = 0;
   briefingTimer = 0;
   briefingDone = false;
+  briefingText = '';
 }
 
 // ============================================================
@@ -812,12 +919,10 @@ function startNextWave() {
     // Spawn enemies at real distress locations
     for (const d of worldDistresses) {
       const etype = distressToEnemyType(d.type);
-      if (etype) {
-        spawnEnemy(d.x, d.y, etype, d.severity);
-      }
+      if (etype) spawnEnemy(d.x, d.y, etype, d.severity);
     }
   } else if (wave === 2) {
-    // Spawn at poor roads
+    // Poor road enemies + activate some manholes
     const poorRoads = worldRoads.filter(r => r.pci >= 0 && r.pci < 55);
     const count = Math.floor(30 * diffMult.spawnMult);
     for (let i = 0; i < count && i < poorRoads.length; i++) {
@@ -827,45 +932,100 @@ function startNextWave() {
       const types = ['crackCrawler', 'patchParasite', 'weatheringFog', 'potholeLurker'];
       spawnEnemy(x, y, types[Math.floor(Math.random() * types.length)], 'm');
     }
-    // Plus remaining real distresses
-    for (let i = 0; i < worldDistresses.length; i += 3) {
-      const d = worldDistresses[i];
-      const etype = distressToEnemyType(d.type);
-      if (etype) spawnEnemy(d.x, d.y, etype, d.severity);
-    }
+    // Activate 10 random manholes as enemy sources
+    const manholes = worldAGAs.filter(a => a.type === 'M' && !a.sealed);
+    const activeMH = manholes.sort(() => Math.random() - 0.5).slice(0, 10);
+    activeMH.forEach(m => { m.active = true; });
   } else if (wave === 3) {
-    const count = Math.floor(50 * diffMult.spawnMult);
+    // "Underground Surge" — manholeHorror enemies flood from manholes
+    const count = Math.floor(20 * diffMult.spawnMult);
     for (let i = 0; i < count; i++) {
       const road = worldRoads[Math.floor(Math.random() * worldRoads.length)];
       const mid = Math.floor(road.coords.length / 2);
       const [x, y] = road.coords[mid] || road.coords[0];
-      const types = ['crackCrawler', 'patchParasite', 'weatheringFog', 'alligatorBeast', 'potholeLurker'];
-      spawnEnemy(x, y, types[Math.floor(Math.random() * types.length)], Math.random() > 0.5 ? 'h' : 'm');
+      spawnEnemy(x, y, 'manholeHorror', 'm');
     }
+    // Plus regular enemies
+    for (let i = 0; i < Math.floor(25 * diffMult.spawnMult); i++) {
+      const road = worldRoads[Math.floor(Math.random() * worldRoads.length)];
+      const mid = Math.floor(road.coords.length / 2);
+      const [x, y] = road.coords[mid] || road.coords[0];
+      const types = ['crackCrawler', 'patchParasite', 'freezeCrack'];
+      spawnEnemy(x, y, types[Math.floor(Math.random() * types.length)], 'm');
+    }
+    // Activate more manholes
+    worldAGAs.filter(a => a.type === 'M' && !a.sealed && !a.active)
+      .sort(() => Math.random() - 0.5).slice(0, 15).forEach(m => { m.active = true; });
   } else if (wave === 4) {
+    // "Fading Lines" — lineDevour + rootWraith debut
+    const count = Math.floor(15 * diffMult.spawnMult);
+    for (let i = 0; i < count; i++) {
+      const road = worldRoads[Math.floor(Math.random() * worldRoads.length)];
+      const ci = Math.floor(Math.random() * road.coords.length);
+      const [x, y] = road.coords[ci] || road.coords[0];
+      spawnEnemy(x, y, 'lineDevour', 'h');
+    }
+    // Spawn rootWraiths at tree locations
+    const trees = worldAGAs.filter(a => a.type === 'T' && !a.liberated);
+    const targetTrees = trees.sort(() => Math.random() - 0.5).slice(0, Math.floor(12 * diffMult.spawnMult));
+    for (const tree of targetTrees) {
+      const e = spawnEnemy(tree.x, tree.y, 'rootWraith', 'h');
+      if (e) e.anchorTree = tree;
+    }
+    // Plus mixed regular
+    for (let i = 0; i < Math.floor(25 * diffMult.spawnMult); i++) {
+      const road = worldRoads[Math.floor(Math.random() * worldRoads.length)];
+      const mid = Math.floor(road.coords.length / 2);
+      const [x, y] = road.coords[mid] || road.coords[0];
+      const types = ['crackCrawler', 'alligatorBeast', 'weatheringFog', 'manholeHorror'];
+      spawnEnemy(x, y, types[Math.floor(Math.random() * types.length)], 'h');
+    }
+  } else if (wave === 5) {
+    // "System Overload" — all types, high intensity
     const count = Math.floor(60 * diffMult.spawnMult);
     for (let i = 0; i < count; i++) {
       const road = worldRoads[Math.floor(Math.random() * worldRoads.length)];
       const ci = Math.floor(Math.random() * road.coords.length);
       const [x, y] = road.coords[ci] || road.coords[0];
-      const types = ['crackCrawler', 'patchParasite', 'weatheringFog', 'alligatorBeast', 'potholeLurker', 'freezeCrack'];
+      const types = ['crackCrawler', 'patchParasite', 'alligatorBeast', 'freezeCrack', 'manholeHorror', 'lineDevour'];
       spawnEnemy(x, y, types[Math.floor(Math.random() * types.length)], 'h');
     }
-  } else if (wave === 5) {
-    // Boss wave
+    // All remaining manholes activate
+    worldAGAs.filter(a => a.type === 'M' && !a.sealed).forEach(m => { m.active = true; });
+  } else if (wave === 6) {
+    // "Network Collapse" — mini-boss clusters at 3 worst intersections
+    const worstRoads = worldRoads.filter(r => r.pci >= 0).sort((a, b) => a.pci - b.pci).slice(0, 3);
+    for (const road of worstRoads) {
+      const mid = Math.floor(road.coords.length / 2);
+      const [x, y] = road.coords[mid] || road.coords[0];
+      // Mini-boss: extra tough alligatorBeast
+      spawnEnemy(x, y, 'alligatorBeast', 'h');
+      spawnEnemy(x, y, 'alligatorBeast', 'h');
+      // Surrounded by minions
+      for (let j = 0; j < Math.floor(10 * diffMult.spawnMult); j++) {
+        const ox = x + (Math.random() - 0.5) * 200;
+        const oy = y + (Math.random() - 0.5) * 200;
+        const types = ['crackCrawler', 'freezeCrack', 'manholeHorror', 'lineDevour'];
+        spawnEnemy(ox, oy, types[Math.floor(Math.random() * types.length)], 'h');
+      }
+    }
+  } else if (wave === 7) {
+    // "The Sinkhole Sovereign" — enhanced boss
     const failedRoads = worldRoads.filter(r => r.pci >= 0 && r.pci < 20).sort((a, b) => a.pci - b.pci);
     const bossRoad = failedRoads[0] || worldRoads[0];
     const mid = Math.floor(bossRoad.coords.length / 2);
     const [bx, by] = bossRoad.coords[mid] || bossRoad.coords[0];
     spawnBoss(bx, by);
     playSound('boss');
-    // Plus some minions
+    // Boss unseals all manholes
+    worldAGAs.filter(a => a.type === 'M').forEach(m => { m.sealed = false; m.active = true; sealedManholes = 0; });
+    // Minions
     const count = Math.floor(30 * diffMult.spawnMult);
     for (let i = 0; i < count; i++) {
       const road = worldRoads[Math.floor(Math.random() * worldRoads.length)];
       const ci = Math.floor(Math.random() * road.coords.length);
       const [x, y] = road.coords[ci] || road.coords[0];
-      const types = ['crackCrawler', 'freezeCrack', 'patchParasite'];
+      const types = ['crackCrawler', 'freezeCrack', 'manholeHorror', 'lineDevour', 'rootWraith'];
       spawnEnemy(x, y, types[Math.floor(Math.random() * types.length)], 'h');
     }
   }
@@ -892,7 +1052,10 @@ function getEnemyStats(type, severity) {
     weatheringFog:   { hp: 40, speed: 30, dmg: 3, pts: 75, size: 30, color: '#8866aa' },
     patchParasite:   { hp: 70, speed: 60, dmg: 8, pts: 150, size: 14, color: '#ff8800' },
     freezeCrack:     { hp: 50, speed: 80, dmg: 7, pts: 100, size: 12, color: '#44aaff' },
-    boss:            { hp: 2000, speed: 15, dmg: 25, pts: 2000, size: 50, color: '#ff2244' }
+    boss:            { hp: 2000, speed: 15, dmg: 25, pts: 2000, size: 50, color: '#ff2244' },
+    manholeHorror:   { hp: 80, speed: 50, dmg: 10, pts: 175, size: 16, color: '#884422' },
+    lineDevour:      { hp: 45, speed: 90, dmg: 4, pts: 125, size: 11, color: '#cccc00' },
+    rootWraith:      { hp: 60, speed: 25, dmg: 6, pts: 150, size: 20, color: '#226622' }
   };
   const s = stats[type] || stats.crackCrawler;
   return {
@@ -908,14 +1071,16 @@ function getEnemyStats(type, severity) {
 
 function spawnEnemy(x, y, type, severity) {
   const s = getEnemyStats(type, severity || 'l');
-  enemies.push({
+  const e = {
     x, y, type, severity: severity || 'l',
     hp: s.hp, maxHp: s.maxHp, speed: s.speed, dmg: s.dmg,
     pts: s.pts, size: s.size, color: s.color,
     vx: 0, vy: 0, stunTime: 0, visible: true,
     moveTimer: Math.random() * 3, moveAngle: Math.random() * Math.PI * 2,
-    damageFlash: 0, pciDrainTimer: 0
-  });
+    damageFlash: 0, pciDrainTimer: 0, anchorTree: null
+  };
+  enemies.push(e);
+  return e;
 }
 
 function spawnBoss(x, y) {
@@ -980,6 +1145,8 @@ function signToPowerup(sign) {
   if (m && m.startsWith('R7')) return 'heal';
   if (m && m.startsWith('W')) return 'scanner';
   if (m && m.startsWith('D')) return 'drone';
+  if (m && m.startsWith('R10')) return 'hack';
+  if (m && m.startsWith('R6')) return 'shield';
   return null;
 }
 
@@ -1008,28 +1175,63 @@ function spawnPowerups() {
 function collectPowerup(p) {
   playSound('powerup');
   score += 25;
-  // Flash real photo if available
+  // Track for debrief
   if (p.img) {
     const cachedImg = getOrLoadImage(p.img);
-    if (cachedImg) {
-      flashImg = cachedImg;
-      flashTimer = 0.5;
-      flashLabel = (p.mutcd || '') + ' ' + (p.cat || '');
-      // Track for debrief
-      if (collectedSignImages.length < 8) {
-        collectedSignImages.push({ img: cachedImg, mutcd: p.mutcd, cat: p.cat });
-      }
+    if (cachedImg && collectedSignImages.length < 8) {
+      collectedSignImages.push({ img: cachedImg, mutcd: p.mutcd, cat: p.cat });
     }
   }
-  switch (p.type) {
+  // Start sign challenge if image available, otherwise apply immediately
+  if (p.img && p.cat) {
+    startSignChallenge(p);
+  } else {
+    applyPowerupEffect(p.type, 1.0);
+  }
+}
+
+function startSignChallenge(p) {
+  const correctCat = p.cat || 'Other';
+  const allCats = ['Regulatory', 'Warning', 'Guide', 'School', 'Other'];
+  const wrongCats = allCats.filter(c => c !== correctCat);
+  const shuffledWrong = wrongCats.sort(() => Math.random() - 0.5).slice(0, 2);
+  const options = [correctCat, ...shuffledWrong].sort(() => Math.random() - 0.5);
+  signChallenge = {
+    img: getOrLoadImage(p.img),
+    correctCat: correctCat,
+    options: options,
+    timer: 3,
+    chosen: -1,
+    result: null,
+    powerupType: p.type,
+    mutcd: p.mutcd || ''
+  };
+  signChallengeActive = true;
+}
+
+function resolveSignChallenge(choiceIdx) {
+  if (!signChallenge) return;
+  const correct = signChallenge.options[choiceIdx] === signChallenge.correctCat;
+  signChallenge.result = correct ? 'INTEL VERIFIED' : 'INTEL PARTIAL';
+  signChallenge.chosen = choiceIdx;
+  const mult = correct ? 1.0 : 0.5;
+  if (correct) { score += 200; playSound('repair'); }
+  else { playSound('damage'); }
+  applyPowerupEffect(signChallenge.powerupType, mult);
+  // Flash result for 0.8s then clear
+  signChallenge.timer = 0.8;
+}
+
+function applyPowerupEffect(type, mult) {
+  switch (type) {
     case 'freeze':
-      player.freezeTime = 4;
-      for (const e of enemies) e.stunTime = 4;
-      activePowerups.push({ type: 'FREEZE', time: 4, color: '#ff2244' });
+      player.freezeTime = 4 * mult;
+      for (const e of enemies) e.stunTime = 4 * mult;
+      activePowerups.push({ type: 'FREEZE', time: 4 * mult, color: '#ff2244' });
       break;
     case 'boost':
-      player.speedBoost = 8;
-      activePowerups.push({ type: 'SPEED+', time: 8, color: '#ffffff' });
+      player.speedBoost = 8 * mult;
+      activePowerups.push({ type: 'SPEED+', time: 8 * mult, color: '#ffffff' });
       break;
     case 'bomb':
       playSound('explosion');
@@ -1037,28 +1239,52 @@ function collectPowerup(p) {
       for (const e of enemies) {
         const dx = e.x - player.x, dy = e.y - player.y;
         if (Math.sqrt(dx * dx + dy * dy) < 400) {
-          e.hp -= 200;
+          e.hp -= 200 * mult;
           spawnExplosion(e.x, e.y, e.color);
         }
       }
       activePowerups.push({ type: 'BOMB', time: 0.5, color: '#ff2244' });
       break;
     case 'heal':
-      player.hp = Math.min(player.maxHp, player.hp + 25);
+      player.hp = Math.min(player.maxHp, player.hp + 25 * mult);
       activePowerups.push({ type: 'HEAL', time: 1, color: '#00ff88' });
       break;
     case 'scanner':
-      player.scanRevealTime = 10;
-      activePowerups.push({ type: 'SCAN', time: 10, color: '#ffee00' });
+      player.scanRevealTime = 10 * mult;
+      activePowerups.push({ type: 'SCAN', time: 10 * mult, color: '#ffee00' });
       break;
     case 'drone':
       if (drones.length < player.maxDrones) {
         drones.push({
           x: player.x, y: player.y, targetRoad: -1,
-          speed: 150, repairTimer: 0, lifetime: 30, angle: 0
+          speed: 150, repairTimer: 0, lifetime: 30 * mult, angle: 0
         });
       }
       activePowerups.push({ type: 'DRONE+', time: 1, color: '#00bbff' });
+      break;
+    case 'hack':
+      // Auto-seal manholes within 500px
+      let hackCount = 0;
+      for (const a of worldAGAs) {
+        if (a.type === 'M' && !a.sealed && dist(player.x, player.y, a.x, a.y) < 500) {
+          a.sealed = true; sealedManholes++; hackCount++;
+          spawnParticles(a.x, a.y, '#00ff88', 8, 60, 0.5);
+        }
+      }
+      // Restore striping condition within 500px
+      for (const s of worldStriping) {
+        const sx = s.isLine ? s.coords[0][0] : s.x;
+        const sy = s.isLine ? s.coords[0][1] : s.y;
+        if (dist(player.x, player.y, sx, sy) < 500 && s.faded) {
+          s.faded = false; s.cond = 'G'; goodStriping++;
+        }
+      }
+      shakeCamera(8);
+      activePowerups.push({ type: 'HACK', time: 2, color: '#00ffaa' });
+      break;
+    case 'shield':
+      player.shieldTime = 5 * mult;
+      activePowerups.push({ type: 'SHIELD', time: 5 * mult, color: '#ffee00' });
       break;
   }
 }
@@ -1157,30 +1383,43 @@ function updateTitle(dt) {
   camera.y = WORLD_H / 2 + Math.sin(titleCamAngle * 0.7) * 600;
 }
 
-const briefingFullText = [
-  "CYVL INTELLIGENCE BRIEFING",
-  "================================",
-  "",
-  "COMMANDER, Somerville's infrastructure is under siege.",
-  "Our sensors have detected 70+ active distress entities",
-  "spreading across 500 road segments.",
-  "",
-  "Current city PCI: 73.6 -- SATISFACTORY but declining.",
-  "",
-  "Your mission: pilot the CYVL scan vehicle through",
-  "real streets, neutralize infrastructure threats,",
-  "and restore road conditions across 5 waves of attack.",
-  "",
-  "The enemy feeds on deteriorating pavement. Every road",
-  "lost makes them stronger. Every repair weakens them.",
-  "",
-  "SELECT DIFFICULTY:",
-  "  [1] CADET    - Reduced threat level",
-  "  [2] CAPTAIN  - Standard operations",
-  "  [3] COMMANDER - Maximum threat",
-  "",
-  "Press ENTER to deploy."
-].join('\n');
+let briefingFullText = '';
+function buildBriefingText() {
+  const ins = cityInsights || {};
+  const nd = ins.totalDistresses || 379;
+  const nr = ins.totalRoads || 500;
+  const nm = (ins.agaTypes && ins.agaTypes.M) || 383;
+  const nt = (ins.agaTypes && ins.agaTypes.T) || 116;
+  const ns = ins.totalStriping || 497;
+  const pci = cityPCI || 73.6;
+  const pciLbl = pci >= 85 ? 'GOOD' : pci >= 70 ? 'SATISFACTORY' : pci >= 55 ? 'FAIR' : pci >= 40 ? 'POOR' : 'FAILED';
+  const sg = ins.stripingCondDist || {};
+  const sgPct = ns > 0 ? Math.round((sg.Good || 0) / ns * 100) : 74;
+  briefingFullText = [
+    "CYVL INTELLIGENCE BRIEFING",
+    "================================",
+    "",
+    "COMMANDER, Somerville's infrastructure is under siege.",
+    "Sensors detect " + nd + " active distresses across",
+    nr + " road segments. " + nm + " manholes compromised.",
+    "",
+    "City PCI: " + pci.toFixed(1) + " -- " + pciLbl,
+    "Striping integrity: " + sgPct + "% | Trees: " + nt,
+    "",
+    "NEW INTEL: Enemies are spawning from real manholes,",
+    "consuming road striping, and corrupting urban trees.",
+    "Seal manholes (beam), liberate trees, defend lanes.",
+    "",
+    "ABILITIES: Q=CCTV Scan  Beam=Seal Manholes",
+    "",
+    "SELECT DIFFICULTY:",
+    "  [1] CADET    - Reduced threat level",
+    "  [2] CAPTAIN  - Standard operations",
+    "  [3] COMMANDER - Maximum threat",
+    "",
+    "Press ENTER to deploy."
+  ].join('\n');
+}
 
 function updateBriefing(dt) {
   if (!briefingDone) {
@@ -1296,12 +1535,84 @@ function updateGameplay(dt) {
   // Update powerup flash timer
   if (flashTimer > 0) flashTimer -= dt;
 
+  // Update sign challenge
+  if (signChallengeActive && signChallenge) {
+    signChallenge.timer -= dt * 0.2; // Timer in real time during bullet-time
+    if (signChallenge.result && signChallenge.timer <= 0) {
+      signChallenge = null; signChallengeActive = false;
+    } else if (!signChallenge.result && signChallenge.timer <= 0) {
+      // Timeout — treat as wrong
+      resolveSignChallenge(-1);
+    }
+  }
+
+  // Update CCTV cooldowns
+  if (player.cctvNetworkTime > 0) {
+    player.cctvNetworkTime -= dt;
+    // Reveal enemies near CCTV cameras (only 1 real CCTV, so use as city-wide scan)
+    for (const e of enemies) e.visible = true;
+  }
+  if (player.cctvCooldown > 0) player.cctvCooldown -= dt;
+  if (player.shieldTime > 0) player.shieldTime -= dt;
+
+  // Active manholes spawn enemies every 5 seconds
+  for (const a of worldAGAs) {
+    if (a.type !== 'M' || a.sealed || !a.active) continue;
+    a.spawnTimer += dt;
+    if (a.spawnTimer >= 5) {
+      a.spawnTimer = 0;
+      if (enemies.length < 100) { // cap enemies
+        spawnEnemy(a.x + (Math.random()-0.5)*30, a.y + (Math.random()-0.5)*30, 'crackCrawler', 'm');
+      }
+    }
+  }
+
+  // Liberated trees repair nearby roads
+  for (const a of worldAGAs) {
+    if (a.type !== 'T' || !a.liberated) continue;
+    // Every 1 second, +1 PCI to nearby roads
+    a.spawnTimer = (a.spawnTimer || 0) + dt;
+    if (a.spawnTimer >= 1) {
+      a.spawnTimer = 0;
+      repairRoadsAt(a.x, a.y, 1);
+    }
+  }
+
+  // Update striping-based speed/energy (check nearby striping)
+  player.onStripingType = null;
+  const pgx = Math.floor(player.x / GRID_CELL);
+  const pgy = Math.floor(player.y / GRID_CELL);
+  for (let dx = -1; dx <= 1; dx++) {
+    for (let dy = -1; dy <= 1; dy++) {
+      const key = (pgx + dx) + ',' + (pgy + dy);
+      const indices = stripingGrid[key];
+      if (!indices) continue;
+      for (const si of indices) {
+        const s = worldStriping[si];
+        if (!s || !s.isLine || s.faded) continue;
+        for (let j = 0; j < s.coords.length - 1; j++) {
+          const dsq = pointToSegmentDistSq(player.x, player.y, s.coords[j][0], s.coords[j][1], s.coords[j+1][0], s.coords[j+1][1]);
+          if (dsq < 400) { player.onStripingType = s.type; break; }
+        }
+        if (player.onStripingType) break;
+      }
+      if (player.onStripingType) break;
+    }
+    if (player.onStripingType) break;
+  }
+
+  // Calculate IHS
+  const mhPct = totalManholes > 0 ? sealedManholes / totalManholes : 1;
+  const stPct = totalStripingCount > 0 ? goodStriping / totalStripingCount : 1;
+  const trPct = totalTrees > 0 ? liberatedTrees / totalTrees : 1;
+  cityIHS = cityPCI * 0.4 + mhPct * 100 * 0.2 + stPct * 100 * 0.2 + trPct * 100 * 0.2;
+
   // Check wave completion
   if (enemies.length === 0 && !waveBreak && !waveComplete) {
     waveComplete = true;
     score += 1000;
     if (waveDamagesTaken === 0) score += 2000;
-    if (wave >= 5) {
+    if (wave >= 7) {
       // Game complete
       endGame();
     } else {
@@ -1320,7 +1631,7 @@ function updateGameplay(dt) {
   }
 
   // Boss continuous spawn
-  if (wave === 5 && bossAlive) {
+  if (wave === 7 && bossAlive) {
     const boss = enemies.find(e => e.type === 'boss');
     if (boss) {
       boss.spawnTimer = (boss.spawnTimer || 0) + dt;
@@ -1361,12 +1672,20 @@ function updatePlayer(dt) {
     my *= 0.707;
   }
 
-  const spd = player.speed * (player.speedBoost > 0 ? 1.5 : 1);
+  let spdMult = player.speedBoost > 0 ? 1.5 : 1;
+  // Striping speed bonus
+  if (player.onStripingType && (player.onStripingType === 'YD' || player.onStripingType === 'YS')) spdMult *= 1.3;
+  const spd = player.speed * spdMult;
   player.vx = mx * spd;
   player.vy = my * spd;
 
   player.x += player.vx * dt;
   player.y += player.vy * dt;
+
+  // Bike lane energy regen bonus
+  if (player.onStripingType === 'BL') {
+    player.energy = Math.min(player.maxEnergy, player.energy + player.energyRegen * dt);
+  }
 
   // Gentle road attraction
   const nr = nearestRoadPoint(player.x, player.y);
@@ -1435,6 +1754,24 @@ function updateBeam(dt) {
     const rx = player.x + (bx - player.x) * t;
     const ry = player.y + (by - player.y) * t;
     repairRoadsAt(rx, ry, dt * 3);
+  }
+
+  // Seal manholes with beam
+  for (const a of worldAGAs) {
+    if (a.type !== 'M' || a.sealed) continue;
+    const d = pointToSegmentDistSq(a.x, a.y, player.x, player.y, bx, by);
+    if (d < 900) { // within 30px
+      a.sealProgress += dt;
+      spawnParticles(a.x, a.y, '#00ff88', 1, 30, 0.2);
+      if (a.sealProgress >= 3) {
+        a.sealed = true;
+        a.active = false;
+        sealedManholes++;
+        score += 300;
+        playSound('repair');
+        spawnParticles(a.x, a.y, '#00ff88', 15, 100, 0.5);
+      }
+    }
   }
 
   // Beam sound periodically
@@ -1564,11 +1901,82 @@ function updateEnemies(dt) {
           e.x += (bpx / bpd) * e.speed * dt;
           e.y += (bpy / bpd) * e.speed * dt;
         }
-        // Drain PCI around boss
+        // Drain PCI around boss + degrade striping
         e.pciDrainTimer += dt;
         if (e.pciDrainTimer > 0.5) {
           e.pciDrainTimer = 0;
           damageRoadsAt(e.x, e.y, 8);
+          // Boss degrades nearby striping
+          for (const s of worldStriping) {
+            if (s.faded) continue;
+            const sx = s.isLine ? s.coords[0][0] : s.x;
+            const sy = s.isLine ? s.coords[0][1] : s.y;
+            if (dist(e.x, e.y, sx, sy) < 200) { s.faded = true; s.cond = 'N'; goodStriping--; }
+          }
+        }
+        break;
+      }
+      case 'manholeHorror': {
+        // Path to nearest unsealed manhole
+        let nearMH = null, nearDist = Infinity;
+        for (const a of worldAGAs) {
+          if (a.type !== 'M' || a.sealed) continue;
+          const d = dist(e.x, e.y, a.x, a.y);
+          if (d < nearDist) { nearMH = a; nearDist = d; }
+        }
+        if (nearMH && nearDist > 20) {
+          const dx = nearMH.x - e.x, dy = nearMH.y - e.y;
+          const d = Math.sqrt(dx * dx + dy * dy);
+          e.x += (dx / d) * e.speed * dt;
+          e.y += (dy / d) * e.speed * dt;
+        } else if (nearMH && nearDist <= 20) {
+          // Arrived at manhole — activate it and die
+          nearMH.active = true;
+          e.hp = 0;
+          score += e.pts;
+          spawnParticles(e.x, e.y, '#884422', 8, 60, 0.5);
+        } else {
+          // No manhole found, wander randomly
+          e.moveTimer += dt;
+          if (e.moveTimer > 2) { e.moveTimer = 0; e.moveAngle = Math.random() * Math.PI * 2; }
+          e.x += Math.cos(e.moveAngle) * e.speed * dt;
+          e.y += Math.sin(e.moveAngle) * e.speed * dt;
+        }
+        break;
+      }
+      case 'lineDevour': {
+        // Move along striping and degrade it
+        e.moveTimer += dt;
+        if (e.moveTimer > 1) {
+          e.moveTimer = 0;
+          e.moveAngle = Math.random() * Math.PI * 2;
+        }
+        e.x += Math.cos(e.moveAngle) * e.speed * dt;
+        e.y += Math.sin(e.moveAngle) * e.speed * dt;
+        // Degrade nearby striping
+        e.pciDrainTimer += dt;
+        if (e.pciDrainTimer > 0.8) {
+          e.pciDrainTimer = 0;
+          for (const s of worldStriping) {
+            if (s.faded) continue;
+            const sx = s.isLine ? s.coords[0][0] : s.x;
+            const sy = s.isLine ? s.coords[0][1] : s.y;
+            if (dist(e.x, e.y, sx, sy) < 60) { s.faded = true; s.cond = 'N'; goodStriping = Math.max(0, goodStriping - 1); }
+          }
+        }
+        break;
+      }
+      case 'rootWraith': {
+        // Anchored to tree location — doesn't move much
+        if (e.anchorTree) {
+          e.x = e.anchorTree.x + Math.sin(gameTime * 0.5) * 15;
+          e.y = e.anchorTree.y + Math.cos(gameTime * 0.7) * 15;
+        }
+        // Drain PCI of nearby roads
+        e.pciDrainTimer += dt;
+        if (e.pciDrainTimer > 1) {
+          e.pciDrainTimer = 0;
+          damageRoadsAt(e.x, e.y, 2);
         }
         break;
       }
@@ -1580,7 +1988,7 @@ function updateEnemies(dt) {
 
     // Player collision
     const pd = dist(player.x, player.y, e.x, e.y);
-    if (pd < e.size + 12 && player.invulnTime <= 0) {
+    if (pd < e.size + 12 && player.invulnTime <= 0 && player.shieldTime <= 0) {
       player.hp -= e.dmg;
       player.invulnTime = 0.5;
       waveDamagesTaken++;
@@ -1615,6 +2023,14 @@ function updateEnemies(dt) {
         score += 3000;
         spawnParticles(e.x, e.y, '#ff2244', 50, 300, 1);
         spawnParticles(e.x, e.y, '#ffaa00', 30, 200, 0.8);
+      }
+
+      // rootWraith death liberates its tree
+      if (e.type === 'rootWraith' && e.anchorTree) {
+        e.anchorTree.liberated = true;
+        liberatedTrees++;
+        score += 100;
+        spawnParticles(e.anchorTree.x, e.anchorTree.y, '#00ff88', 15, 80, 0.8);
       }
 
       enemies.splice(i, 1);
@@ -2000,8 +2416,17 @@ function drawGameplay() {
   // Draw subtle background grid
   drawBackgroundGrid();
 
+  // Draw striping (under roads)
+  drawStriping();
+
   // Draw roads
   drawRoads();
+
+  // Draw distress zones
+  drawDistressZones();
+
+  // Draw AGAs (manholes, trees, CCTV)
+  drawAGAs();
 
   // Draw powerups
   drawPowerups();
@@ -2031,6 +2456,9 @@ function drawGameplay() {
 
   // Proximity sign popup — bottom left
   drawProximityPopup();
+
+  // Sign challenge overlay
+  if (signChallengeActive && signChallenge) drawSignChallenge();
 
   // Powerup flash overlay
   if (flashTimer > 0) {
@@ -2178,6 +2606,21 @@ function drawPlayer() {
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.arc(sx, sy, 25, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // Shield aura
+  if (player.shieldTime > 0) {
+    const shPulse = 0.4 + Math.sin(gameTime * 8) * 0.2;
+    ctx.strokeStyle = `rgba(0, 238, 255, ${shPulse})`;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(sx, sy, 22, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = `rgba(0, 238, 255, ${shPulse * 0.3})`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(sx, sy, 28, 0, Math.PI * 2);
     ctx.stroke();
   }
 }
@@ -2385,6 +2828,114 @@ function drawEnemies() {
         ctx.strokeRect(sx - 40, sy - e.size - 15, 80, 6);
         break;
       }
+      case 'manholeHorror': {
+        // Rising sewer horror — dark brown mass with tendrils
+        const mhPhase = gameTime * 3 + e.x * 0.01;
+        // Body mass
+        ctx.fillStyle = flash ? '#ffffff' : '#553311';
+        ctx.beginPath();
+        ctx.arc(sx, sy, e.size, 0, Math.PI * 2);
+        ctx.fill();
+        // Dark core
+        ctx.fillStyle = '#221100';
+        ctx.beginPath();
+        ctx.arc(sx, sy, e.size * 0.5, 0, Math.PI * 2);
+        ctx.fill();
+        // Tendrils
+        ctx.strokeStyle = flash ? '#ffffff88' : '#88442288';
+        ctx.lineWidth = 2;
+        for (let j = 0; j < 5; j++) {
+          const ang = (j / 5) * Math.PI * 2 + mhPhase;
+          const len = e.size * (1.2 + Math.sin(mhPhase + j) * 0.4);
+          ctx.beginPath();
+          ctx.moveTo(sx + Math.cos(ang) * e.size * 0.4, sy + Math.sin(ang) * e.size * 0.4);
+          ctx.quadraticCurveTo(
+            sx + Math.cos(ang + 0.3) * len * 0.7,
+            sy + Math.sin(ang + 0.3) * len * 0.7,
+            sx + Math.cos(ang) * len, sy + Math.sin(ang) * len
+          );
+          ctx.stroke();
+        }
+        // Glowing eyes
+        ctx.fillStyle = '#ff4400';
+        ctx.beginPath();
+        ctx.arc(sx - 4, sy - 3, 2, 0, Math.PI * 2);
+        ctx.arc(sx + 4, sy - 3, 2, 0, Math.PI * 2);
+        ctx.fill();
+        break;
+      }
+      case 'lineDevour': {
+        // Striping-eating insect — yellow segmented body
+        const ldPhase = gameTime * 6 + e.y * 0.01;
+        // Segments
+        for (let j = 2; j >= 0; j--) {
+          const ox = Math.sin(ldPhase + j * 0.5) * 3;
+          ctx.fillStyle = flash ? '#ffffff' : (j === 0 ? '#eecc00' : '#ccaa00');
+          ctx.beginPath();
+          ctx.ellipse(sx + ox - j * 5, sy, e.size * 0.5, e.size * 0.4, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        // Mandibles
+        ctx.strokeStyle = '#ffee00';
+        ctx.lineWidth = 1.5;
+        const mAng = Math.sin(ldPhase * 2) * 0.3;
+        ctx.beginPath();
+        ctx.moveTo(sx + e.size * 0.5, sy);
+        ctx.lineTo(sx + e.size, sy - 4 - mAng * 4);
+        ctx.moveTo(sx + e.size * 0.5, sy);
+        ctx.lineTo(sx + e.size, sy + 4 + mAng * 4);
+        ctx.stroke();
+        // Eyes
+        ctx.fillStyle = '#ff0000';
+        ctx.beginPath();
+        ctx.arc(sx + e.size * 0.3, sy - 2, 1.5, 0, Math.PI * 2);
+        ctx.arc(sx + e.size * 0.3, sy + 2, 1.5, 0, Math.PI * 2);
+        ctx.fill();
+        break;
+      }
+      case 'rootWraith': {
+        // Tree-anchored spirit — green ghostly mass with root tendrils
+        const rwPhase = gameTime * 1.5 + e.x * 0.02;
+        // Ghostly aura
+        ctx.fillStyle = flash ? '#ffffff22' : '#22662222';
+        ctx.beginPath();
+        ctx.arc(sx, sy, e.size * 1.5, 0, Math.PI * 2);
+        ctx.fill();
+        // Main body — wispy shape
+        ctx.fillStyle = flash ? '#ffffff' : '#338833';
+        ctx.beginPath();
+        ctx.arc(sx, sy - 4, e.size * 0.7, 0, Math.PI * 2);
+        ctx.fill();
+        // Root tendrils reaching down
+        ctx.strokeStyle = '#44aa4488';
+        ctx.lineWidth = 2;
+        for (let j = 0; j < 4; j++) {
+          const baseAng = Math.PI * 0.5 + (j - 1.5) * 0.4;
+          const len = e.size * (1.3 + Math.sin(rwPhase + j) * 0.3);
+          ctx.beginPath();
+          ctx.moveTo(sx, sy + e.size * 0.3);
+          ctx.quadraticCurveTo(
+            sx + Math.cos(baseAng) * len * 0.5,
+            sy + Math.sin(baseAng) * len * 0.5,
+            sx + Math.cos(baseAng) * len,
+            sy + Math.sin(baseAng) * len
+          );
+          ctx.stroke();
+        }
+        // Face
+        ctx.fillStyle = '#88ff88';
+        ctx.beginPath();
+        ctx.arc(sx - 4, sy - 6, 2.5, 0, Math.PI * 2);
+        ctx.arc(sx + 4, sy - 6, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+        // Mouth
+        ctx.strokeStyle = '#88ff88';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(sx, sy - 1, 4, 0, Math.PI);
+        ctx.stroke();
+        break;
+      }
     }
 
     // HP bar for non-boss enemies (only when damaged)
@@ -2570,6 +3121,205 @@ function drawParticles() {
   ctx.globalAlpha = 1;
 }
 
+function drawStriping() {
+  const vl = camera.x - CW / 2 - 50, vr = camera.x + CW / 2 + 50;
+  const vt = camera.y - CH / 2 - 50, vb = camera.y + CH / 2 + 50;
+  for (const s of worldStriping) {
+    if (!s.isLine) continue;
+    let vis = false;
+    for (const c of s.coords) {
+      if (c[0] >= vl && c[0] <= vr && c[1] >= vt && c[1] <= vb) { vis = true; break; }
+    }
+    if (!vis) continue;
+    const isYellow = s.type.startsWith('Y');
+    const isBike = s.type === 'BL';
+    const isDashed = s.type === 'WS' || s.type === 'YS' || s.type === 'WH' || s.type === 'YH';
+    ctx.strokeStyle = isYellow ? '#ccaa00' : isBike ? '#44cc44' : '#cccccc';
+    ctx.lineWidth = s.type.includes('D') ? 3 : 2;
+    ctx.globalAlpha = s.faded ? 0.12 : 0.5;
+    if (isDashed) ctx.setLineDash([6, 6]);
+    else ctx.setLineDash([]);
+    ctx.beginPath();
+    const [sx0, sy0] = worldToScreen(s.coords[0][0], s.coords[0][1]);
+    ctx.moveTo(sx0, sy0);
+    for (let i = 1; i < s.coords.length; i++) {
+      const [sx, sy] = worldToScreen(s.coords[i][0], s.coords[i][1]);
+      ctx.lineTo(sx, sy);
+    }
+    ctx.stroke();
+    if (isBike && !s.faded) {
+      ctx.strokeStyle = '#00ff4444';
+      ctx.lineWidth = 8;
+      ctx.globalAlpha = 0.1;
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawAGAs() {
+  for (const a of worldAGAs) {
+    const [sx, sy] = worldToScreen(a.x, a.y);
+    if (sx < -30 || sx > CW + 30 || sy < -30 || sy > CH + 30) continue;
+    switch (a.type) {
+      case 'M':
+        ctx.fillStyle = a.sealed ? '#00ff8833' : '#44444466';
+        ctx.strokeStyle = a.sealed ? '#00ff88' : '#666';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(sx, sy, 8, 0, Math.PI * 2);
+        ctx.fill(); ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(sx - 5, sy); ctx.lineTo(sx + 5, sy);
+        ctx.moveTo(sx, sy - 5); ctx.lineTo(sx, sy + 5);
+        ctx.stroke();
+        if (!a.sealed && a.active) {
+          ctx.fillStyle = '#ff224422';
+          ctx.beginPath();
+          ctx.arc(sx, sy, 12 + Math.sin(gameTime * 3) * 3, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        // Show seal progress
+        if (a.sealProgress > 0 && !a.sealed) {
+          ctx.strokeStyle = '#00ff88';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(sx, sy, 12, -Math.PI/2, -Math.PI/2 + (a.sealProgress / 3) * Math.PI * 2);
+          ctx.stroke();
+        }
+        break;
+      case 'T':
+        if (a.liberated) {
+          // Liberated tree — green glow aura
+          ctx.fillStyle = '#00ff8808';
+          ctx.beginPath();
+          ctx.arc(sx, sy, 25, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = '#00ff8822';
+          ctx.beginPath();
+          ctx.arc(sx, sy, 25, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.fillStyle = a.liberated ? '#00cc44' : '#005522';
+        ctx.beginPath();
+        ctx.arc(sx, sy, 7 + Math.sin(gameTime + a.x) * 1.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = a.liberated ? '#44dd22' : '#003311';
+        ctx.beginPath();
+        ctx.arc(sx, sy, 5, 0, Math.PI * 2);
+        ctx.fill();
+        break;
+      case 'C':
+        ctx.fillStyle = '#00e5ff';
+        ctx.fillRect(sx - 3, sy - 5, 6, 10);
+        ctx.fillRect(sx + 3, sy - 2, 5, 4);
+        if (player.cctvNetworkTime > 0) {
+          ctx.strokeStyle = '#00e5ff11';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.arc(sx, sy, 40 + Math.sin(gameTime * 2) * 5, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        break;
+    }
+  }
+}
+
+function drawDistressZones() {
+  for (const d of worldDistresses) {
+    const [sx, sy] = worldToScreen(d.x, d.y);
+    if (sx < -40 || sx > CW + 40 || sy < -40 || sy > CH + 40) continue;
+    const sz = Math.max(4, Math.min(20, Math.sqrt(d.area || 1) * 3));
+    ctx.fillStyle = d.severity === 'h' ? '#ff224422' : d.severity === 'm' ? '#ff880022' : '#ffaa0015';
+    ctx.beginPath();
+    ctx.arc(sx, sy, sz, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = d.severity === 'h' ? '#ff224444' : '#ff880033';
+    ctx.lineWidth = 0.5;
+    const cracks = d.type.includes('crack') ? 3 : 1;
+    for (let j = 0; j < cracks; j++) {
+      const ang = (j / cracks) * Math.PI * 2 + d.x;
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      ctx.lineTo(sx + Math.cos(ang) * sz, sy + Math.sin(ang) * sz);
+      ctx.stroke();
+    }
+  }
+}
+
+function drawSignChallenge() {
+  if (!signChallenge) return;
+  const cx = CW / 2, cy = CH / 2;
+  const pw = 480, ph = 280;
+  const px = cx - pw / 2, py = cy - ph / 2;
+
+  // Dim background
+  ctx.fillStyle = 'rgba(0,10,20,0.85)';
+  ctx.fillRect(0, 0, CW, CH);
+
+  // Panel
+  ctx.fillStyle = 'rgba(10,15,30,0.98)';
+  ctx.fillRect(px, py, pw, ph);
+  ctx.strokeStyle = signChallenge.result ? (signChallenge.result === 'INTEL VERIFIED' ? '#00ff88' : '#ff8800') : '#00e5ff';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(px, py, pw, ph);
+
+  // Photo on left
+  if (signChallenge.img) {
+    drawCyberpunkPhoto(signChallenge.img, px + 10, py + 35, 200, 160);
+  }
+
+  // Title
+  ctx.fillStyle = '#00e5ff';
+  ctx.font = 'bold 14px "Courier New", monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(signChallenge.result || 'IDENTIFY THIS SIGN', cx, py + 20);
+
+  // MUTCD code
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 12px "Courier New", monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText(signChallenge.mutcd, px + 10, py + 215);
+
+  // Options on right
+  if (!signChallenge.result) {
+    ctx.font = '14px "Courier New", monospace';
+    for (let i = 0; i < signChallenge.options.length; i++) {
+      const oy = py + 55 + i * 50;
+      const isHover = false;
+      ctx.fillStyle = '#00e5ff22';
+      ctx.fillRect(px + 225, oy, 240, 36);
+      ctx.strokeStyle = '#00e5ff66';
+      ctx.strokeRect(px + 225, oy, 240, 36);
+      ctx.fillStyle = '#00e5ff';
+      ctx.font = 'bold 14px "Courier New", monospace';
+      ctx.textAlign = 'left';
+      ctx.fillText('[' + (i + 1) + '] ' + signChallenge.options[i], px + 235, oy + 23);
+    }
+  } else {
+    // Show result
+    ctx.fillStyle = signChallenge.result === 'INTEL VERIFIED' ? '#00ff88' : '#ff8800';
+    ctx.font = 'bold 24px "Courier New", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(signChallenge.result, px + 345, py + 100);
+    if (signChallenge.result === 'INTEL VERIFIED') {
+      ctx.fillStyle = '#00ff8888';
+      ctx.font = '14px "Courier New", monospace';
+      ctx.fillText('+200 INTEL BONUS', px + 345, py + 130);
+    }
+  }
+
+  // Timer bar
+  if (!signChallenge.result) {
+    const timerPct = Math.max(0, signChallenge.timer / 3);
+    ctx.fillStyle = '#111';
+    ctx.fillRect(px + 10, py + ph - 15, pw - 20, 6);
+    ctx.fillStyle = timerPct > 0.3 ? '#00e5ff' : '#ff2244';
+    ctx.fillRect(px + 10, py + ph - 15, (pw - 20) * timerPct, 6);
+  }
+}
+
 function updateProximitySign() {
   // Find nearest sign with image within 150 world units
   let best = null, bestDist = 150;
@@ -2694,7 +3444,7 @@ function drawHUD() {
   ctx.fillStyle = '#00e5ff';
   ctx.font = 'bold 18px "Courier New", monospace';
   ctx.textAlign = 'center';
-  ctx.fillText('WAVE ' + wave + '/5', CW / 2, 24);
+  ctx.fillText('WAVE ' + wave + '/7', CW / 2, 24);
   ctx.fillStyle = '#ffffff';
   ctx.font = 'bold 16px "Courier New", monospace';
   ctx.fillText('SCORE: ' + score.toLocaleString(), CW / 2, 44);
@@ -2702,22 +3452,63 @@ function drawHUD() {
   // Top right: Minimap
   drawMinimap();
 
-  // Bottom left: PCI meter
-  const pciX = 12, pciY = CH - 55;
+  // Bottom left: Infrastructure dashboard
+  const pciX = 12, pciY = CH - 80;
   ctx.fillStyle = '#00e5ff88';
   ctx.font = '10px "Courier New", monospace';
   ctx.textAlign = 'left';
   ctx.fillText('CITY PCI', pciX, pciY);
   ctx.fillStyle = pciColorValue(cityPCI);
-  ctx.font = 'bold 28px "Courier New", monospace';
-  ctx.fillText(cityPCI.toFixed(1), pciX, pciY + 30);
+  ctx.font = 'bold 22px "Courier New", monospace';
+  ctx.fillText(cityPCI.toFixed(1), pciX, pciY + 22);
   // PCI bar
   ctx.fillStyle = '#111';
-  ctx.fillRect(pciX + 85, pciY + 8, 100, 20);
+  ctx.fillRect(pciX + 70, pciY + 6, 80, 14);
   ctx.fillStyle = pciColorValue(cityPCI);
-  ctx.fillRect(pciX + 85, pciY + 8, cityPCI, 20);
+  ctx.fillRect(pciX + 70, pciY + 6, 80 * (cityPCI / 100), 14);
   ctx.strokeStyle = '#00e5ff44';
-  ctx.strokeRect(pciX + 85, pciY + 8, 100, 20);
+  ctx.strokeRect(pciX + 70, pciY + 6, 80, 14);
+
+  // Infrastructure sub-stats
+  const subY = pciY + 30;
+  ctx.font = '9px "Courier New", monospace';
+  // Manholes sealed
+  const mhStr = 'MH:' + sealedManholes + '/' + totalManholes;
+  ctx.fillStyle = sealedManholes >= totalManholes && totalManholes > 0 ? '#00ff88' : '#ff884488';
+  ctx.fillText(mhStr, pciX, subY);
+  // Striping
+  const stPct = totalStripingCount > 0 ? Math.round(goodStriping / totalStripingCount * 100) : 0;
+  ctx.fillStyle = stPct > 70 ? '#00ff8888' : '#ffaa0088';
+  ctx.fillText('ST:' + stPct + '%', pciX + 70, subY);
+  // Trees
+  ctx.fillStyle = liberatedTrees > 0 ? '#00ff8888' : '#22662288';
+  ctx.fillText('TR:' + liberatedTrees + '/' + totalTrees, pciX + 118, subY);
+
+  // IHS score
+  ctx.fillStyle = '#00e5ff66';
+  ctx.font = '9px "Courier New", monospace';
+  ctx.fillText('IHS', pciX + 160, pciY);
+  const ihsColor = cityIHS >= 80 ? '#00ff88' : cityIHS >= 60 ? '#ffaa00' : '#ff2244';
+  ctx.fillStyle = ihsColor;
+  ctx.font = 'bold 16px "Courier New", monospace';
+  ctx.fillText(cityIHS.toFixed(0), pciX + 160, pciY + 18);
+
+  // CCTV cooldown indicator
+  if (player.cctvCooldown > 0) {
+    ctx.fillStyle = '#00e5ff44';
+    ctx.font = '9px "Courier New", monospace';
+    ctx.fillText('CCTV:' + Math.ceil(player.cctvCooldown) + 's', pciX + 160, subY);
+  } else {
+    ctx.fillStyle = '#00e5ff';
+    ctx.font = '9px "Courier New", monospace';
+    ctx.fillText('CCTV:RDY', pciX + 160, subY);
+  }
+  // Shield indicator
+  if (player.shieldTime > 0) {
+    ctx.fillStyle = '#00eeff';
+    ctx.font = 'bold 9px "Courier New", monospace';
+    ctx.fillText('SHIELD:' + player.shieldTime.toFixed(1), pciX + 210, subY);
+  }
 
   // Bottom center: Active powerups
   const apX = CW / 2 - activePowerups.length * 35;
@@ -2792,7 +3583,7 @@ function drawHUD() {
   ctx.fillStyle = '#00e5ff33';
   ctx.font = '9px "Courier New", monospace';
   ctx.textAlign = 'left';
-  ctx.fillText('WASD:Move  LClick:Beam  RClick/Space:Scan  E:Drone  ESC:Pause', 12, CH - 5);
+  ctx.fillText('WASD:Move  LClick:Beam  RClick/Space:Scan  E:Drone  Q:CCTV  ESC:Pause', 12, CH - 5);
 }
 
 function drawMinimap() {
@@ -2913,26 +3704,62 @@ function drawDebrief() {
   ctx.restore();
 
   // Stats
+  const mhPct = totalManholes > 0 ? Math.round(sealedManholes / totalManholes * 100) : 0;
+  const stPctD = totalStripingCount > 0 ? Math.round(goodStriping / totalStripingCount * 100) : 0;
+  const trPctD = totalTrees > 0 ? Math.round(liberatedTrees / totalTrees * 100) : 0;
   const stats = [
     ['FINAL SCORE', score.toLocaleString()],
-    ['WAVES SURVIVED', Math.min(wave, 5) + '/5'],
+    ['WAVES SURVIVED', Math.min(wave, 7) + '/7'],
     ['ENEMIES DESTROYED', totalKills.toString()],
     ['ROADS REPAIRED', totalRepairs.toString()],
     ['STARTING PCI', startPCI.toFixed(1)],
     ['FINAL PCI', cityPCI.toFixed(1)],
-    ['PCI CHANGE', (cityPCI - startPCI >= 0 ? '+' : '') + (cityPCI - startPCI).toFixed(1)]
+    ['MANHOLES SEALED', sealedManholes + '/' + totalManholes + ' (' + mhPct + '%)'],
+    ['STRIPING INTACT', stPctD + '%'],
+    ['TREES LIBERATED', liberatedTrees + '/' + totalTrees + ' (' + trPctD + '%)']
   ];
 
-  ctx.font = '14px "Courier New", monospace';
+  ctx.font = '13px "Courier New", monospace';
   ctx.textAlign = 'left';
   for (let i = 0; i < stats.length; i++) {
-    const y = 270 + i * 28;
+    const y = 255 + i * 24;
     ctx.fillStyle = '#00e5ff88';
-    ctx.fillText(stats[i][0], CW / 2 - 180, y);
+    ctx.fillText(stats[i][0], CW / 2 - 200, y);
     ctx.fillStyle = '#ffffff';
     ctx.textAlign = 'right';
-    ctx.fillText(stats[i][1], CW / 2 + 180, y);
+    ctx.fillText(stats[i][1], CW / 2 + 200, y);
     ctx.textAlign = 'left';
+  }
+
+  // IHS breakdown bars
+  const ihsY = 488;
+  ctx.fillStyle = '#00e5ff88';
+  ctx.font = '10px "Courier New", monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('INFRASTRUCTURE HEALTH SCORE: ' + cityIHS.toFixed(1), CW / 2, ihsY);
+  const bars = [
+    { label: 'PCI', pct: cityPCI / 100, color: pciColorValue(cityPCI), weight: '40%' },
+    { label: 'MANHOLES', pct: totalManholes > 0 ? sealedManholes / totalManholes : 1, color: '#ff8844', weight: '20%' },
+    { label: 'STRIPING', pct: totalStripingCount > 0 ? goodStriping / totalStripingCount : 1, color: '#ffee00', weight: '20%' },
+    { label: 'TREES', pct: totalTrees > 0 ? liberatedTrees / totalTrees : 1, color: '#44cc44', weight: '20%' }
+  ];
+  const barStartX = CW / 2 - 180;
+  for (let i = 0; i < bars.length; i++) {
+    const bx = barStartX, by = ihsY + 8 + i * 16;
+    ctx.fillStyle = '#00e5ff66';
+    ctx.font = '8px "Courier New", monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(bars[i].label + ' (' + bars[i].weight + ')', bx, by + 8);
+    ctx.fillStyle = '#111';
+    ctx.fillRect(bx + 110, by, 200, 10);
+    ctx.fillStyle = bars[i].color;
+    ctx.fillRect(bx + 110, by, 200 * Math.min(bars[i].pct, 1), 10);
+    ctx.strokeStyle = '#00e5ff22';
+    ctx.strokeRect(bx + 110, by, 200, 10);
+    ctx.fillStyle = '#fff';
+    ctx.font = '8px "Courier New", monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText(Math.round(bars[i].pct * 100) + '%', bx + 330, by + 8);
   }
 
   // Buttons
@@ -2955,15 +3782,16 @@ function drawDebrief() {
     ctx.fillStyle = '#00e5ff88';
     ctx.font = '10px "Courier New", monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('FIELD INTEL COLLECTED', CW / 2, 490);
+    ctx.fillText('FIELD INTEL COLLECTED', CW / 2, 570);
 
-    const thumbW = 100, thumbH = 70;
-    const totalW = collectedSignImages.length * (thumbW + 8) - 8;
+    const thumbW = 80, thumbH = 50;
+    const maxThumbs = Math.min(collectedSignImages.length, 8);
+    const totalW = maxThumbs * (thumbW + 6) - 6;
     const startX = (CW - totalW) / 2;
-    for (let i = 0; i < collectedSignImages.length; i++) {
+    for (let i = 0; i < maxThumbs; i++) {
       const ci = collectedSignImages[i];
-      const tx = startX + i * (thumbW + 8);
-      const ty = 500;
+      const tx = startX + i * (thumbW + 6);
+      const ty = 578;
       if (ci.img) {
         drawCyberpunkPhoto(ci.img, tx, ty, thumbW, thumbH, { glitch: false });
       }
@@ -3003,7 +3831,7 @@ function gameLoop(timestamp) {
         drawDeploy();
         break;
       case SCREENS.GAMEPLAY:
-        updateGameplay(dt);
+        updateGameplay(signChallengeActive && signChallenge && !signChallenge.result ? dt * 0.2 : dt);
         drawGameplay();
         break;
       case SCREENS.PAUSED:
