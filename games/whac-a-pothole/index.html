@@ -250,15 +250,19 @@ let score = 0;
 let missed = 0;
 let combo = 0;
 let multiplier = 1;
-let timeLeft = 90;
+let timeLeft = 60;
 let spawnTimer = 0;
-let spawnInterval = 1.4; // seconds between spawns
-let potholes = []; // { col, row, type:'pothole'|'sinkhole', timer, maxTime, phase(0=grow,1=idle,2=shrink), hit:bool }
-let patchEffects = []; // { col, row, timer }
+let spawnInterval = 1.0;
+let potholes = [];
+let patchEffects = [];
 let titlePulse = 0;
 let shakeTimer = 0;
 let shakeIntensity = 0;
 let highScore = parseInt(localStorage.getItem('whacPotholeHigh') || '0');
+let wave = 1;
+let waveTimer = 0;
+let waveBannerTimer = 0;
+let potholesFilled = 0;
 
 // ---------- tile state for road markings ----------
 const roadMarkings = [];
@@ -279,14 +283,18 @@ function resetGame() {
   missed = 0;
   combo = 0;
   multiplier = 1;
-  timeLeft = 90;
+  timeLeft = 60;
   spawnTimer = 0;
-  spawnInterval = 1.4;
+  spawnInterval = 1.0;
   potholes = [];
   patchEffects = [];
   particles = [];
   floatingTexts = [];
   shakeTimer = 0;
+  wave = 1;
+  waveTimer = 0;
+  waveBannerTimer = 2.0;
+  potholesFilled = 0;
 }
 
 // ---------- pothole logic ----------
@@ -300,8 +308,11 @@ function spawnPothole() {
   if (free.length === 0) return;
 
   const spot = free[Math.floor(Math.random() * free.length)];
-  const isSinkhole = Math.random() < 0.15; // 15% chance of sinkhole
-  const visibleTime = isSinkhole ? (1.4 + Math.random() * 0.6) : (2.0 + Math.random() * 1.0);
+  const isSinkhole = Math.random() < (0.15 + wave * 0.05); // more sinkholes in later waves
+  const waveReduction = Math.min((wave - 1) * 0.3, 1.0);
+  const visibleTime = isSinkhole
+    ? Math.max(0.8, 1.4 - waveReduction + Math.random() * 0.4)
+    : Math.max(1.0, 1.8 - waveReduction + Math.random() * 0.5);
 
   potholes.push({
     col: spot.col,
@@ -361,6 +372,7 @@ function hitPothole(col, row) {
     if (p.col === col && p.row === row && !p.hit && p.phase < 2) {
       p.hit = true;
       p.timer = 0;
+      potholesFilled++;
 
       combo++;
       if (combo >= 10) multiplier = 4;
@@ -572,10 +584,10 @@ function drawHUD() {
   ctx.fillStyle = timerColor;
   ctx.fillText(`${Math.ceil(timeLeft)}s`, sx(W / 2), sy(40));
 
-  // missed counter
+  // wave indicator
   ctx.textAlign = 'right';
-  ctx.fillStyle = missed >= 7 ? COL.red : COL.orange;
-  ctx.fillText(`MISSED: ${missed}/10`, sx(W - 20), sy(40));
+  ctx.fillStyle = COL.green;
+  ctx.fillText(`WAVE ${wave}`, sx(W - 20), sy(40));
 
   // second row: combo / multiplier
   if (combo > 0) {
@@ -607,11 +619,11 @@ function drawHUD() {
     ctx.fillRect(px, pipY, pipSize, pipSize);
   }
 
-  // bottom info
-  ctx.fillStyle = COL.dimWhite;
-  ctx.font = `${sx(14)}px 'Courier New', monospace`;
+  // missed counter at bottom
+  ctx.fillStyle = missed >= 7 ? COL.red : COL.orange;
+  ctx.font = `${sx(16)}px 'Courier New', monospace`;
   ctx.textAlign = 'center';
-  ctx.fillText('CLICK / TAP POTHOLES TO PATCH THEM', sx(W / 2), sy(H - 30));
+  ctx.fillText(`MISSED: ${missed}/10`, sx(W / 2), sy(H - 30));
 }
 
 function drawTitleScreen(t) {
@@ -654,7 +666,7 @@ function drawTitleScreen(t) {
     'SINKHOLES (RED) ARE WORTH MORE',
     'MISS 10 AND ITS GAME OVER',
     '',
-    '90 SECOND ROUNDS - BEAT YOUR BEST!',
+    '60 SECONDS - SURVIVE THE WAVES!',
   ];
   lines.forEach((line, i) => {
     ctx.fillText(line, sx(W / 2), sy(390 + i * 30));
@@ -776,18 +788,34 @@ function frame(now) {
   if (timeLeft <= 0) { timeLeft = 0; endGame(); return; }
   if (missed >= 10) { endGame(); return; }
 
-  // difficulty ramp — spawn interval decreases over time
-  const elapsed = 90 - timeLeft;
-  spawnInterval = Math.max(0.6, 1.4 - elapsed * 0.008);
+  // wave system — every 8 potholes filled advances the wave
+  if (potholesFilled >= wave * 8) {
+    wave++;
+    waveBannerTimer = 2.0;
+  }
+
+  // wave banner countdown
+  if (waveBannerTimer > 0) waveBannerTimer -= dt;
+
+  // difficulty ramps with wave
+  // Wave 1: 1.0s spawn, normal visibility
+  // Wave 2: 0.8s spawn, shorter visibility, double spawns
+  // Wave 3: 0.6s spawn, even shorter, triple spawns
+  // Wave 4+: 0.45s spawn, very short, constant pressure
+  spawnInterval = Math.max(0.4, 1.0 - (wave - 1) * 0.18);
 
   // spawn logic
   spawnTimer += dt;
   if (spawnTimer >= spawnInterval) {
     spawnTimer = 0;
     spawnPothole();
-    // occasional double spawn after 30 seconds
-    if (elapsed > 30 && Math.random() < 0.3) {
-      setTimeout(() => { if (state === STATE.PLAYING) spawnPothole(); }, 200);
+    // double spawn from wave 2+
+    if (wave >= 2 && Math.random() < 0.4) {
+      setTimeout(() => { if (state === STATE.PLAYING) spawnPothole(); }, 150);
+    }
+    // triple spawn from wave 4+
+    if (wave >= 4 && Math.random() < 0.3) {
+      setTimeout(() => { if (state === STATE.PLAYING) spawnPothole(); }, 300);
     }
   }
 
@@ -811,12 +839,32 @@ function frame(now) {
   if (shakeTimer > 0) ctx.restore();
 }
 
+function drawWaveBanner() {
+  if (waveBannerTimer <= 0) return;
+  const a = Math.min(1, waveBannerTimer / 0.5);
+  ctx.globalAlpha = a;
+  ctx.fillStyle = 'rgba(10,10,26,0.7)';
+  ctx.fillRect(sx(100), sy(H / 2 - 50), sx(W - 200), sy(100));
+  ctx.strokeStyle = COL.cyan;
+  ctx.lineWidth = sx(2);
+  ctx.strokeRect(sx(100), sy(H / 2 - 50), sx(W - 200), sy(100));
+  ctx.fillStyle = COL.cyan;
+  ctx.shadowColor = COL.cyan;
+  ctx.shadowBlur = sx(15);
+  ctx.font = `bold ${sx(42)}px 'Courier New', monospace`;
+  ctx.textAlign = 'center';
+  ctx.fillText(`WAVE ${wave}`, sx(W / 2), sy(H / 2 + 12));
+  ctx.shadowBlur = 0;
+  ctx.globalAlpha = 1;
+}
+
 function drawBackground() {
   drawTiles();
   drawPotholes();
   drawParticles();
   drawFloatingTexts();
   drawHUD();
+  drawWaveBanner();
 }
 
 function endGame() {

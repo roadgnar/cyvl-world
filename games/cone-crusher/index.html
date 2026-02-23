@@ -198,10 +198,13 @@
   let titleBlink = 0;
 
   // --- Input Handlers ---
-  canvas.addEventListener('mousemove', (e) => {
+  document.addEventListener('mousemove', (e) => {
     const rect = canvas.getBoundingClientRect();
-    const scaleX = W / rect.width;
-    mouseX = (e.clientX - rect.left) * scaleX;
+    mouseX = (e.clientX - rect.left) / rect.width * W;
+  });
+  document.addEventListener('pointermove', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    mouseX = (e.clientX - rect.left) / rect.width * W;
   });
 
   window.addEventListener('keydown', (e) => {
@@ -471,10 +474,10 @@
       paddle.x += paddleSpeed;
     }
 
-    // Mouse tracking
+    // Mouse tracking — snap to mouse position
     const diff = mouseX - paddle.x;
-    if (Math.abs(diff) > 2) {
-      paddle.x += diff * 0.3;
+    if (Math.abs(diff) > 1) {
+      paddle.x += diff * 0.6;
     }
 
     // Clamp paddle
