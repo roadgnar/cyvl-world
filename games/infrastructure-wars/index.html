@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>INFRASTRUCTURE WARS: The Cyvl Saga</title>
+<script defer src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script defer src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script defer src="/shared/leaderboard.js"></script>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { background: #0a0a1a; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; font-family: 'Courier New', monospace; }
@@ -1553,6 +1556,7 @@ function onBossDeath() {
   // Level complete
   if (currentLevel >= 2) {
     game.state = 'victory';
+    if (typeof CyvlLeaderboard !== 'undefined') CyvlLeaderboard.show('infrastructure-wars', player.score);
   } else {
     game.state = 'levelComplete';
     game.transitionTimer = 0;
@@ -2297,6 +2301,7 @@ function update(dt) {
   if (player.hp <= 0) {
     game.state = 'gameOver';
     playSound('explosion');
+    if (typeof CyvlLeaderboard !== 'undefined') CyvlLeaderboard.show('infrastructure-wars', player.score);
   }
 }
 

@@ -8,6 +8,9 @@
 <meta property="og:title" content="CYVL ARCADE">
 <meta property="og:description" content="Retro games for infrastructure nerds. Play Infrastructure Wars and more.">
 <link rel="stylesheet" href="/shared/arcade.css">
+<script defer src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script defer src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script defer src="/shared/leaderboard.js"></script>
 <style>
   /* Background canvas */
   #arcadeBg {
@@ -348,6 +351,15 @@
 // ============================================================
 renderGameCards('gameGrid');
 bindCardEvents();
+
+// Load mini-leaderboards on game cards
+setTimeout(function() {
+  if (typeof CyvlLeaderboard !== 'undefined') {
+    ARCADE_GAMES.forEach(function(game) {
+      CyvlLeaderboard.renderMini('lb-mini-' + game.id, game.id, 3);
+    });
+  }
+}, 500);
 
 // Init audio on first interaction
 document.addEventListener('click', function() {

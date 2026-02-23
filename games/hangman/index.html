@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Infrastructure Hangman</title>
+<script defer src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script defer src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script defer src="/shared/leaderboard.js"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -303,6 +306,7 @@
     <span class="round">ROUND: <span id="round-num">1</span></span>
     <span class="wins">W: <span id="win-count">0</span></span>
     <span class="losses">L: <span id="loss-count">0</span></span>
+    <span><button id="lb-btn" onclick="if(typeof CyvlLeaderboard!=='undefined')CyvlLeaderboard.show('hangman',parseInt(document.getElementById('win-count').textContent)||0)" style="background:transparent;border:1px solid #007a8a;color:#007a8a;font-family:'Courier New',monospace;font-size:0.7rem;letter-spacing:1px;padding:3px 10px;cursor:pointer;transition:all 0.2s;vertical-align:middle" onmouseover="this.style.color='#00e5ff';this.style.borderColor='#00e5ff'" onmouseout="this.style.color='#007a8a';this.style.borderColor='#007a8a'">LEADERBOARD</button></span>
   </div>
   <div id="category"></div>
 

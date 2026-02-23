@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>WHAC-A-POTHOLE</title>
+<script defer src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script defer src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script defer src="/shared/leaderboard.js"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -874,6 +877,7 @@ function endGame() {
     localStorage.setItem('whacPotholeHigh', String(highScore));
   }
   playGameOver();
+  if (typeof CyvlLeaderboard !== 'undefined') CyvlLeaderboard.show('whac-a-pothole', score);
 }
 
 // ---------- input ----------

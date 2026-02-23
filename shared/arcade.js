@@ -86,6 +86,7 @@ function renderGameCards(containerId) {
         '<p class="game-card-subtitle">' + game.subtitle + '</p>' +
         '<p class="game-card-desc">' + game.description + '</p>' +
         '<div class="game-card-tags">' + tagsHtml + '</div>' +
+        '<div id="lb-mini-' + game.id + '"></div>' +
       '</div>' +
       '<div class="game-card-coin">INSERT COIN</div>';
 

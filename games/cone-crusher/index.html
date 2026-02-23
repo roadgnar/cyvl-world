@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>CONE CRUSHER</title>
+<script defer src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script defer src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script defer src="/shared/leaderboard.js"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -622,6 +625,7 @@
       playSound('loselife');
       if (lives <= 0) {
         state = STATE.GAME_OVER;
+        if (typeof CyvlLeaderboard !== 'undefined') CyvlLeaderboard.show('cone-crusher', score);
       } else {
         resetBall();
         state = STATE.READY;
@@ -673,6 +677,7 @@
       playSound('levelcomplete');
       if (level >= MAX_LEVEL) {
         state = STATE.VICTORY;
+        if (typeof CyvlLeaderboard !== 'undefined') CyvlLeaderboard.show('cone-crusher', score);
       } else {
         state = STATE.LEVEL_COMPLETE;
       }

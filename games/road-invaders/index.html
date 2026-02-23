@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ROAD INVADERS</title>
+<script defer src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script defer src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script defer src="/shared/leaderboard.js"></script>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
@@ -621,6 +624,7 @@ function updateEnemies(dt) {
             highScore = score;
             localStorage.setItem('roadInvadersHigh', highScore.toString());
           }
+          if (typeof CyvlLeaderboard !== 'undefined') CyvlLeaderboard.show('road-invaders', score);
           return;
         }
       }
@@ -724,6 +728,7 @@ function playerHit() {
       highScore = score;
       localStorage.setItem('roadInvadersHigh', highScore.toString());
     }
+    if (typeof CyvlLeaderboard !== 'undefined') CyvlLeaderboard.show('road-invaders', score);
   } else {
     player.respawnTimer = 2.0;
     player.x = W / 2;
