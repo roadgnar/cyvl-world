@@ -564,6 +564,7 @@ let floatingTexts = [];
 let confirmTarget = null;
 let reclassifyTarget = null;
 let streakTextTimer = 0;
+let popupOpenTime = 0; // track when popup/confirm was opened to prevent same-click close
 
 const TIMER_DURATIONS = {
   ELIMINATE: 60,
@@ -1743,6 +1744,7 @@ function showReclassifyPopup(ann, x, y) {
   popup.style.left = Math.min(popX, W - 150) + 'px';
   popup.style.top = Math.min(popY, H - 200) + 'px';
   popup.style.display = 'block';
+  popupOpenTime = performance.now();
 
   const title = document.createElement('div');
   title.style.cssText = 'color:#ff6600;font-size:10px;margin-bottom:4px;';
@@ -1824,6 +1826,7 @@ function showConfirmButtons(ann, x, y) {
   confirmBtns.style.left = Math.min(popX - 45, W - 100) + 'px';
   confirmBtns.style.top = Math.max(popY - 50, 50) + 'px';
   confirmBtns.style.display = 'block';
+  popupOpenTime = performance.now();
 }
 
 function handleConfirmJudgment(approve) {
@@ -2222,13 +2225,14 @@ document.getElementById('btn-quit').addEventListener('click', () => {
   startTitle();
 });
 
-// Click on popup background to close
+// Click on popup background to close (ignore if popup just opened on this same click)
 document.addEventListener('click', (e) => {
+  if (performance.now() - popupOpenTime < 100) return;
   if (popup.style.display !== 'none' && !popup.contains(e.target)) {
     popup.style.display = 'none';
     reclassifyTarget = null;
   }
-  if (confirmBtns.style.display !== 'none' && !confirmBtns.contains(e.target) && e.target !== canvas) {
+  if (confirmBtns.style.display !== 'none' && !confirmBtns.contains(e.target)) {
     confirmBtns.style.display = 'none';
     confirmTarget = null;
   }
