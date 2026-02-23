@@ -171,6 +171,133 @@ let deployRadar = 0;
 let debriefGrade = 'C';
 let debriefShown = false;
 
+// ============================================================
+// IMAGE CACHE — Real street-level sign photos
+// ============================================================
+const imageCache = new Map(); // url → {img, lastUsed, loaded}
+const IMAGE_CACHE_MAX = 30;
+let imageLoadQueue = [];
+let imageLoadsActive = 0;
+const IMAGE_MAX_CONCURRENT = 4;
+
+// Title/briefing preloaded images
+let titleImages = []; // [{img, mutcd, cat, url}]
+let titleImageTimer = 0;
+let titleImageSet = 0; // which set of 4 is showing
+
+// Gameplay proximity
+let proximitySign = null; // nearest sign with image within range
+let proximityAlpha = 0;
+let proximityImg = null;
+
+// Powerup flash
+let flashImg = null;
+let flashTimer = 0;
+let flashLabel = '';
+
+// Collected sign images for debrief
+let collectedSignImages = []; // [{img, mutcd, cat}]
+
+function getOrLoadImage(url) {
+  if (!url) return null;
+  if (imageCache.has(url)) {
+    const entry = imageCache.get(url);
+    entry.lastUsed = performance.now();
+    return entry.loaded ? entry.img : null;
+  }
+  // Evict oldest if full
+  if (imageCache.size >= IMAGE_CACHE_MAX) {
+    let oldest = null, oldestTime = Infinity;
+    for (const [k, v] of imageCache) {
+      if (v.lastUsed < oldestTime) { oldest = k; oldestTime = v.lastUsed; }
+    }
+    if (oldest) imageCache.delete(oldest);
+  }
+  const entry = { img: new Image(), loaded: false, lastUsed: performance.now() };
+  entry.img.crossOrigin = 'anonymous';
+  imageCache.set(url, entry);
+  // Queue the load
+  imageLoadQueue.push({ url, entry });
+  processImageQueue();
+  return null;
+}
+
+function processImageQueue() {
+  while (imageLoadsActive < IMAGE_MAX_CONCURRENT && imageLoadQueue.length > 0) {
+    const { url, entry } = imageLoadQueue.shift();
+    imageLoadsActive++;
+    entry.img.onload = function() { entry.loaded = true; imageLoadsActive--; processImageQueue(); };
+    entry.img.onerror = function() { imageCache.delete(url); imageLoadsActive--; processImageQueue(); };
+    entry.img.src = url;
+  }
+}
+
+function drawCyberpunkPhoto(img, x, y, w, h, opts) {
+  if (!img || !img.complete || img.naturalWidth === 0) return;
+  opts = opts || {};
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x, y, w, h);
+  ctx.clip();
+
+  // Draw base image
+  const imgAspect = img.naturalWidth / img.naturalHeight;
+  const boxAspect = w / h;
+  let sx = 0, sy = 0, sw = img.naturalWidth, sh = img.naturalHeight;
+  if (imgAspect > boxAspect) {
+    sw = img.naturalHeight * boxAspect;
+    sx = (img.naturalWidth - sw) / 2;
+  } else {
+    sh = img.naturalWidth / boxAspect;
+    sy = (img.naturalHeight - sh) / 2;
+  }
+  ctx.drawImage(img, sx, sy, sw, sh, x, y, w, h);
+
+  // Cyan tint overlay
+  ctx.globalCompositeOperation = 'multiply';
+  ctx.fillStyle = opts.tint || '#44ccdd';
+  ctx.fillRect(x, y, w, h);
+  ctx.globalCompositeOperation = 'source-over';
+
+  // CRT scanlines
+  ctx.fillStyle = 'rgba(0,0,0,0.15)';
+  for (let ly = y; ly < y + h; ly += 3) {
+    ctx.fillRect(x, ly, w, 1);
+  }
+
+  // Vignette
+  const vg = ctx.createRadialGradient(x + w/2, y + h/2, Math.min(w,h)*0.3, x + w/2, y + h/2, Math.max(w,h)*0.7);
+  vg.addColorStop(0, 'transparent');
+  vg.addColorStop(1, 'rgba(0,0,0,0.6)');
+  ctx.fillStyle = vg;
+  ctx.fillRect(x, y, w, h);
+
+  // Optional glitch (2% chance per frame)
+  if (opts.glitch !== false && Math.random() < 0.02) {
+    const sliceY = y + Math.random() * h;
+    const sliceH = 2 + Math.random() * 8;
+    const offset = (Math.random() - 0.5) * 20;
+    ctx.drawImage(canvas, x, sliceY, w, sliceH, x + offset, sliceY, w, sliceH);
+  }
+
+  // Border
+  ctx.strokeStyle = opts.borderColor || '#00e5ff44';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x, y, w, h);
+
+  ctx.restore();
+}
+
+function preloadTitleImages() {
+  // Pick 8 diverse sign images from worldSigns
+  const withImg = worldSigns.filter(s => s.img);
+  const shuffled = withImg.sort(() => Math.random() - 0.5).slice(0, 8);
+  titleImages = shuffled.map(s => {
+    const img = getOrLoadImage(s.img);
+    return { url: s.img, mutcd: s.mutcd, cat: s.cat };
+  });
+}
+
 // Precomputed road map for minimap
 let minimapCanvas = null;
 let minimapCtx = null;
@@ -374,6 +501,7 @@ function loadData() {
       loadStage = 'Processing roads...';
       processData();
       loadStage = 'Done!';
+      preloadTitleImages();
       screen = SCREENS.TITLE;
     })
     .catch(err => {
@@ -423,7 +551,7 @@ function processData() {
   // Process signs
   worldSigns = gameData.signs.map(s => {
     const [wx, wy] = lngLatToWorld(s.x, s.y);
-    return { x: wx, y: wy, mutcd: s.m, cat: s.cat };
+    return { x: wx, y: wy, mutcd: s.m, cat: s.cat, img: s.img || null };
   });
 
   // Build minimap
@@ -626,6 +754,13 @@ function startGameplay() {
   totalKills = 0;
   totalRepairs = 0;
   waveDamagesTaken = 0;
+  // Reset imagery state
+  proximitySign = null;
+  proximityAlpha = 0;
+  proximityImg = null;
+  flashImg = null;
+  flashTimer = 0;
+  collectedSignImages = [];
   player.hp = player.maxHp;
   player.energy = player.maxEnergy;
   player.scanCooldown = 0;
@@ -864,7 +999,7 @@ function spawnPowerups() {
     if (near) continue;
     powerups.push({
       x: sign.x, y: sign.y, type: ptype, bobOffset: Math.random() * Math.PI * 2,
-      lifetime: 30
+      lifetime: 30, img: sign.img || null, mutcd: sign.mutcd, cat: sign.cat
     });
     spawned++;
   }
@@ -873,6 +1008,19 @@ function spawnPowerups() {
 function collectPowerup(p) {
   playSound('powerup');
   score += 25;
+  // Flash real photo if available
+  if (p.img) {
+    const cachedImg = getOrLoadImage(p.img);
+    if (cachedImg) {
+      flashImg = cachedImg;
+      flashTimer = 0.5;
+      flashLabel = (p.mutcd || '') + ' ' + (p.cat || '');
+      // Track for debrief
+      if (collectedSignImages.length < 8) {
+        collectedSignImages.push({ img: cachedImg, mutcd: p.mutcd, cat: p.cat });
+      }
+    }
+  }
   switch (p.type) {
     case 'freeze':
       player.freezeTime = 4;
@@ -1141,6 +1289,12 @@ function updateGameplay(dt) {
       powerups.splice(i, 1);
     }
   }
+
+  // Update proximity sign detection
+  updateProximitySign();
+
+  // Update powerup flash timer
+  if (flashTimer > 0) flashTimer -= dt;
 
   // Check wave completion
   if (enemies.length === 0 && !waveBreak && !waveComplete) {
@@ -1595,6 +1749,25 @@ function drawTitle() {
 
   drawRoads();
 
+  // Ghostly photo mosaic behind title
+  titleImageTimer += dt;
+  if (titleImages.length >= 4) {
+    const set = Math.floor(titleImageTimer / 4) % 2;
+    const fadeT = titleImageTimer % 4;
+    const alpha = fadeT < 0.5 ? fadeT / 0.5 * 0.15 : fadeT > 3.5 ? (4 - fadeT) / 0.5 * 0.15 : 0.15;
+    ctx.globalAlpha = alpha;
+    const startIdx = set * 4;
+    for (let i = 0; i < 4 && (startIdx + i) < titleImages.length; i++) {
+      const ti = titleImages[startIdx + i];
+      const img = getOrLoadImage(ti.url);
+      if (img) {
+        const col = i % 2, row = Math.floor(i / 2);
+        drawCyberpunkPhoto(img, col * CW / 2 + 40, row * CH / 2 + 20, CW / 2 - 80, CH / 2 - 40, { glitch: false, borderColor: 'transparent' });
+      }
+    }
+    ctx.globalAlpha = 1.0;
+  }
+
   // Dark overlay
   ctx.fillStyle = 'rgba(10, 10, 26, 0.65)';
   ctx.fillRect(0, 0, CW, CH);
@@ -1652,14 +1825,15 @@ function drawBriefing() {
   ctx.fillStyle = '#0a0a1a';
   ctx.fillRect(0, 0, CW, CH);
 
-  // Terminal border
+  // Terminal border (narrowed to leave room for intel sidebar)
+  const termW = CW - 350;
   ctx.strokeStyle = '#00e5ff33';
   ctx.lineWidth = 1;
-  ctx.strokeRect(50, 40, CW - 100, CH - 80);
+  ctx.strokeRect(50, 40, termW, CH - 80);
 
   // Header bar
   ctx.fillStyle = '#00e5ff11';
-  ctx.fillRect(50, 40, CW - 100, 30);
+  ctx.fillRect(50, 40, termW, 30);
   ctx.fillStyle = '#00e5ff';
   ctx.font = '12px "Courier New", monospace';
   ctx.textAlign = 'left';
@@ -1694,17 +1868,59 @@ function drawBriefing() {
   const diffNames = ['CADET', 'CAPTAIN', 'COMMANDER'];
   const diffColors = ['#00ff88', '#ffaa00', '#ff2244'];
   ctx.fillStyle = diffColors[difficulty];
-  ctx.fillText('DIFFICULTY: ' + diffNames[difficulty], CW / 2, CH - 60);
+  ctx.fillText('DIFFICULTY: ' + diffNames[difficulty], CW / 2 - 120, CH - 60);
 
   // Threat bar
   const barW = 200, barH = 8;
-  const barX = CW / 2 - barW / 2, barY = CH - 45;
+  const barX = CW / 2 - 120 - barW / 2, barY = CH - 45;
   ctx.fillStyle = '#111';
   ctx.fillRect(barX, barY, barW, barH);
   ctx.fillStyle = diffColors[difficulty];
   ctx.fillRect(barX, barY, barW * ((difficulty + 1) / 3), barH);
   ctx.strokeStyle = '#00e5ff33';
   ctx.strokeRect(barX, barY, barW, barH);
+
+  // Right sidebar — FIELD INTEL photo feed
+  const sideX = CW - 290, sideY = 50, sideW = 250, sideH = CH - 110;
+  ctx.fillStyle = 'rgba(10,10,26,0.95)';
+  ctx.fillRect(sideX, sideY, sideW, sideH);
+  ctx.strokeStyle = '#00e5ff33';
+  ctx.strokeRect(sideX, sideY, sideW, sideH);
+
+  // Sidebar header
+  ctx.fillStyle = '#00e5ff88';
+  ctx.font = '10px "Courier New", monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('FIELD INTEL // PHOTO FEED', sideX + 10, sideY + 16);
+  ctx.strokeStyle = '#00e5ff22';
+  ctx.beginPath();
+  ctx.moveTo(sideX + 10, sideY + 22);
+  ctx.lineTo(sideX + sideW - 10, sideY + 22);
+  ctx.stroke();
+
+  // Cycle through preloaded images every 3 seconds
+  if (titleImages.length > 0) {
+    const imgIdx = Math.floor(performance.now() / 3000) % titleImages.length;
+    const ti = titleImages[imgIdx];
+    const img = getOrLoadImage(ti.url);
+    if (img) {
+      drawCyberpunkPhoto(img, sideX + 10, sideY + 30, sideW - 20, 180);
+      // MUTCD label below photo
+      ctx.fillStyle = '#00e5ff';
+      ctx.font = 'bold 12px "Courier New", monospace';
+      ctx.textAlign = 'left';
+      ctx.fillText(ti.mutcd || 'SIGN', sideX + 10, sideY + 225);
+      ctx.fillStyle = '#00e5ff66';
+      ctx.font = '10px "Courier New", monospace';
+      ctx.fillText(ti.cat || '', sideX + 10, sideY + 240);
+    }
+
+    // Status text
+    ctx.fillStyle = '#00e5ff44';
+    ctx.font = '10px "Courier New", monospace';
+    ctx.fillText('LIVE FEED: ' + titleImages.length + ' SOURCES', sideX + 10, sideY + sideH - 15);
+    ctx.fillText('SCANNING INFRASTRUCTURE...', sideX + 10, sideY + sideH - 3);
+  }
 }
 
 function drawDeploy() {
@@ -1812,6 +2028,14 @@ function drawGameplay() {
 
   // Draw HUD
   drawHUD();
+
+  // Proximity sign popup — bottom left
+  drawProximityPopup();
+
+  // Powerup flash overlay
+  if (flashTimer > 0) {
+    drawPowerupFlash();
+  }
 
   // Wave break overlay
   if (waveBreak) {
@@ -2346,6 +2570,94 @@ function drawParticles() {
   ctx.globalAlpha = 1;
 }
 
+function updateProximitySign() {
+  // Find nearest sign with image within 150 world units
+  let best = null, bestDist = 150;
+  for (const s of worldSigns) {
+    if (!s.img) continue;
+    const d = dist(player.x, player.y, s.x, s.y);
+    if (d < bestDist) { best = s; bestDist = d; }
+  }
+  if (best) {
+    proximitySign = best;
+    proximityAlpha = Math.min(1, proximityAlpha + dt * 3);
+    const img = getOrLoadImage(best.img);
+    proximityImg = img;
+  } else {
+    proximityAlpha = Math.max(0, proximityAlpha - dt * 3);
+    if (proximityAlpha <= 0) { proximitySign = null; proximityImg = null; }
+  }
+}
+
+function drawProximityPopup() {
+  if (!proximitySign || proximityAlpha <= 0) return;
+  const px = 12, py = CH - 220, pw = 200, ph = 160;
+  ctx.save();
+  ctx.globalAlpha = proximityAlpha * 0.9;
+
+  // Panel background
+  ctx.fillStyle = 'rgba(10,10,26,0.92)';
+  ctx.fillRect(px, py, pw, ph);
+  ctx.strokeStyle = '#00e5ff66';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(px, py, pw, ph);
+
+  // Header
+  ctx.fillStyle = '#00e5ff';
+  ctx.font = 'bold 9px "Courier New", monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('SIGN DETECTED', px + 6, py + 12);
+
+  // Photo
+  if (proximityImg) {
+    drawCyberpunkPhoto(proximityImg, px + 5, py + 18, pw - 10, 105);
+  }
+
+  // Label
+  ctx.globalAlpha = proximityAlpha;
+  ctx.fillStyle = '#00e5ff';
+  ctx.font = 'bold 11px "Courier New", monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText(proximitySign.mutcd || 'SIGN', px + 6, py + ph - 18);
+  ctx.fillStyle = '#00e5ff66';
+  ctx.font = '9px "Courier New", monospace';
+  ctx.fillText(proximitySign.cat || '', px + 6, py + ph - 6);
+
+  ctx.restore();
+}
+
+function drawPowerupFlash() {
+  if (flashTimer <= 0 || !flashImg) return;
+  const alpha = Math.min(1, flashTimer * 4) * 0.7;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+
+  // Full-screen dark overlay
+  ctx.fillStyle = 'rgba(0,20,30,0.8)';
+  ctx.fillRect(0, 0, CW, CH);
+
+  // Center photo large
+  const fw = 400, fh = 300;
+  const fx = (CW - fw) / 2, fy = (CH - fh) / 2 - 20;
+  drawCyberpunkPhoto(flashImg, fx, fy, fw, fh, { tint: '#22aacc' });
+
+  // Chromatic aberration effect — offset red/blue channels
+  ctx.globalCompositeOperation = 'screen';
+  ctx.globalAlpha = alpha * 0.15;
+  ctx.drawImage(canvas, fx - 3, fy, fw, fh);
+  ctx.drawImage(canvas, fx + 3, fy, fw, fh);
+  ctx.globalCompositeOperation = 'source-over';
+
+  // Label
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = '#00e5ff';
+  ctx.font = 'bold 16px "Courier New", monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('INTEL CAPTURED: ' + flashLabel, CW / 2, fy + fh + 30);
+
+  ctx.restore();
+}
+
 function drawHUD() {
   // Top left: HP and Energy
   const hudX = 12, hudY = 12;
@@ -2637,6 +2949,30 @@ function drawDebrief() {
   ctx.fillStyle = diffColors[difficulty];
   ctx.font = '12px "Courier New", monospace';
   ctx.fillText('Difficulty: ' + diffNames[difficulty], CW / 2, CH - 100);
+
+  // Intel collage — collected sign photos
+  if (collectedSignImages.length > 0) {
+    ctx.fillStyle = '#00e5ff88';
+    ctx.font = '10px "Courier New", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('FIELD INTEL COLLECTED', CW / 2, 490);
+
+    const thumbW = 100, thumbH = 70;
+    const totalW = collectedSignImages.length * (thumbW + 8) - 8;
+    const startX = (CW - totalW) / 2;
+    for (let i = 0; i < collectedSignImages.length; i++) {
+      const ci = collectedSignImages[i];
+      const tx = startX + i * (thumbW + 8);
+      const ty = 500;
+      if (ci.img) {
+        drawCyberpunkPhoto(ci.img, tx, ty, thumbW, thumbH, { glitch: false });
+      }
+      ctx.fillStyle = '#00e5ff88';
+      ctx.font = '8px "Courier New", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(ci.mutcd || '', tx + thumbW / 2, ty + thumbH + 10);
+    }
+  }
 }
 
 // ============================================================
