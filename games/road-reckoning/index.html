@@ -1114,39 +1114,60 @@ function drawRoadObject(obj, scene) {
 // ============================================================
 function drawAnnotations(scene, time) {
   const anns = scene.annotations;
+  const pulse = 0.6 + Math.sin(time * 5) * 0.4;
 
   for (const ann of anns) {
     if (currentMode === 'ELIMINATE') {
       if (ann.eliminated) continue;
-      ctx.strokeStyle = ann.correct ? COL.boxCorrect : COL.boxWrong;
-      ctx.lineWidth = 2;
+      const isWrong = !ann.correct;
+      const boxColor = isWrong ? COL.boxWrong : COL.boxCorrect;
+      // Visible fill on ALL boxes so they're easy to see
+      ctx.fillStyle = isWrong ? 'rgba(255,34,68,0.18)' : 'rgba(0,255,136,0.10)';
+      ctx.fillRect(ann.x, ann.y, ann.w, ann.h);
+      // Thick border
+      ctx.strokeStyle = boxColor;
+      ctx.lineWidth = isWrong ? 3 : 2;
       ctx.setLineDash([6, 4]);
       ctx.strokeRect(ann.x, ann.y, ann.w, ann.h);
       ctx.setLineDash([]);
-      // Faint fill for wrong
-      if (!ann.correct) {
-        ctx.fillStyle = 'rgba(255,34,68,0.08)';
-        ctx.fillRect(ann.x, ann.y, ann.w, ann.h);
+      // Wrong boxes pulse/glow
+      if (isWrong) {
+        ctx.strokeStyle = `rgba(255,34,68,${pulse * 0.5})`;
+        ctx.lineWidth = 5;
+        ctx.strokeRect(ann.x - 2, ann.y - 2, ann.w + 4, ann.h + 4);
       }
       // Label
-      drawAnnotationLabel(ann.label, ann.x, ann.y - 4, ann.correct ? COL.boxCorrect : COL.boxWrong);
+      drawAnnotationLabel(ann.label, ann.x, ann.y - 4, boxColor);
+      // Corner brackets for clickable feel
+      drawCornerBrackets(ann.x, ann.y, ann.w, ann.h, boxColor);
     } else if (currentMode === 'DISCOVER') {
       if (ann.missing && !ann.discovered) {
-        // Subtle pulsing outline for missing
-        const pulse = 0.3 + Math.sin(time * 4) * 0.2;
-        ctx.strokeStyle = `rgba(255,102,0,${pulse})`;
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([4, 8]);
-        ctx.strokeRect(ann.x - 3, ann.y - 3, ann.w + 6, ann.h + 6);
+        // BRIGHT pulsing box for missing targets — easy to spot
+        const p = 0.5 + Math.sin(time * 4) * 0.4;
+        ctx.fillStyle = `rgba(255,102,0,${p * 0.25})`;
+        ctx.fillRect(ann.x - 4, ann.y - 4, ann.w + 8, ann.h + 8);
+        ctx.strokeStyle = `rgba(255,102,0,${p})`;
+        ctx.lineWidth = 3;
+        ctx.setLineDash([6, 4]);
+        ctx.strokeRect(ann.x - 4, ann.y - 4, ann.w + 8, ann.h + 8);
         ctx.setLineDash([]);
+        // Blinking "?" label
+        if (Math.sin(time * 6) > -0.3) {
+          drawAnnotationLabel('??? CLICK TO DISCOVER', ann.x - 4, ann.y - 8, COL.orange);
+        }
+        drawCornerBrackets(ann.x - 4, ann.y - 4, ann.w + 8, ann.h + 8, COL.orange);
       } else if (ann.missing && ann.discovered) {
+        ctx.fillStyle = 'rgba(0,255,136,0.15)';
+        ctx.fillRect(ann.x, ann.y, ann.w, ann.h);
         ctx.strokeStyle = COL.green;
-        ctx.lineWidth = 2;
+        ctx.lineWidth = 3;
         ctx.setLineDash([6, 4]);
         ctx.strokeRect(ann.x, ann.y, ann.w, ann.h);
         ctx.setLineDash([]);
         drawAnnotationLabel(ann.label + ' [FOUND]', ann.x, ann.y - 4, COL.green);
       } else if (!ann.missing) {
+        ctx.fillStyle = 'rgba(0,255,136,0.08)';
+        ctx.fillRect(ann.x, ann.y, ann.w, ann.h);
         ctx.strokeStyle = COL.boxCorrect;
         ctx.lineWidth = 2;
         ctx.setLineDash([6, 4]);
@@ -1156,40 +1177,78 @@ function drawAnnotations(scene, time) {
       }
     } else if (currentMode === 'RECLASSIFY') {
       if (ann.reclassified) {
+        ctx.fillStyle = 'rgba(0,255,136,0.15)';
+        ctx.fillRect(ann.x, ann.y, ann.w, ann.h);
         ctx.strokeStyle = COL.green;
-        ctx.lineWidth = 2;
+        ctx.lineWidth = 3;
         ctx.setLineDash([6, 4]);
         ctx.strokeRect(ann.x, ann.y, ann.w, ann.h);
         ctx.setLineDash([]);
         drawAnnotationLabel(ann.correctLabel + ' [FIXED]', ann.x, ann.y - 4, COL.green);
       } else {
-        const boxColor = ann.wrongLabel ? '#ffaa00' : COL.boxCorrect;
+        const isWrong = ann.wrongLabel;
+        const boxColor = isWrong ? '#ffaa00' : COL.boxCorrect;
+        ctx.fillStyle = isWrong ? 'rgba(255,170,0,0.15)' : 'rgba(0,255,136,0.08)';
+        ctx.fillRect(ann.x, ann.y, ann.w, ann.h);
         ctx.strokeStyle = boxColor;
-        ctx.lineWidth = 2;
+        ctx.lineWidth = isWrong ? 3 : 2;
         ctx.setLineDash([6, 4]);
         ctx.strokeRect(ann.x, ann.y, ann.w, ann.h);
         ctx.setLineDash([]);
-        drawAnnotationLabel(ann.label, ann.x, ann.y - 4, boxColor);
+        drawAnnotationLabel(ann.label + (isWrong ? ' [WRONG?]' : ''), ann.x, ann.y - 4, boxColor);
+        if (isWrong) {
+          drawCornerBrackets(ann.x, ann.y, ann.w, ann.h, '#ffaa00');
+        }
       }
     } else if (currentMode === 'CONFIRM') {
       if (ann.judged) {
         const col = ann.judgment === ann.correctAnnotation ? COL.green : COL.red;
+        ctx.fillStyle = ann.judgment === ann.correctAnnotation ? 'rgba(0,255,136,0.15)' : 'rgba(255,34,68,0.15)';
+        ctx.fillRect(ann.x, ann.y, ann.w, ann.h);
         ctx.strokeStyle = col;
-        ctx.lineWidth = 2;
+        ctx.lineWidth = 3;
         ctx.setLineDash([]);
         ctx.strokeRect(ann.x, ann.y, ann.w, ann.h);
         const mark = ann.judgment ? '\u2713' : '\u2717';
         drawAnnotationLabel(ann.label + ' ' + mark, ann.x, ann.y - 4, col);
       } else {
+        // Bright cyan fill + border for unjudged
+        ctx.fillStyle = 'rgba(0,229,255,0.12)';
+        ctx.fillRect(ann.x, ann.y, ann.w, ann.h);
         ctx.strokeStyle = COL.cyan;
-        ctx.lineWidth = 2;
+        ctx.lineWidth = 3;
         ctx.setLineDash([6, 4]);
         ctx.strokeRect(ann.x, ann.y, ann.w, ann.h);
         ctx.setLineDash([]);
-        drawAnnotationLabel(ann.label, ann.x, ann.y - 4, COL.cyan);
+        drawAnnotationLabel(ann.label + ' [CLICK TO JUDGE]', ann.x, ann.y - 4, COL.cyan);
+        drawCornerBrackets(ann.x, ann.y, ann.w, ann.h, COL.cyan);
       }
     }
   }
+}
+
+// Draw corner brackets on annotation boxes for a "targeting" feel
+function drawCornerBrackets(x, y, w, h, color) {
+  const len = Math.min(10, w / 4, h / 4);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.setLineDash([]);
+  // Top-left
+  ctx.beginPath();
+  ctx.moveTo(x - 3, y - 3 + len); ctx.lineTo(x - 3, y - 3); ctx.lineTo(x - 3 + len, y - 3);
+  ctx.stroke();
+  // Top-right
+  ctx.beginPath();
+  ctx.moveTo(x + w + 3 - len, y - 3); ctx.lineTo(x + w + 3, y - 3); ctx.lineTo(x + w + 3, y - 3 + len);
+  ctx.stroke();
+  // Bottom-left
+  ctx.beginPath();
+  ctx.moveTo(x - 3, y + h + 3 - len); ctx.lineTo(x - 3, y + h + 3); ctx.lineTo(x - 3 + len, y + h + 3);
+  ctx.stroke();
+  // Bottom-right
+  ctx.beginPath();
+  ctx.moveTo(x + w + 3 - len, y + h + 3); ctx.lineTo(x + w + 3, y + h + 3); ctx.lineTo(x + w + 3, y + h + 3 - len);
+  ctx.stroke();
 }
 
 function drawAnnotationLabel(text, x, y, color) {
@@ -1283,6 +1342,37 @@ function drawEffects() {
     ctx.globalAlpha = 1;
     ctx.textAlign = 'left';
   }
+}
+
+// ============================================================
+// MODE INSTRUCTION BANNER
+// ============================================================
+const MODE_INSTRUCTIONS = {
+  ELIMINATE: 'CLICK the RED boxes to eliminate bad annotations',
+  DISCOVER: 'CLICK the ORANGE pulsing areas to discover missing annotations',
+  RECLASSIFY: 'CLICK AMBER [WRONG?] labels, then pick the correct type',
+  CONFIRM: 'CLICK each CYAN box, then mark it correct or incorrect',
+};
+
+function drawModeInstruction(time) {
+  const text = MODE_INSTRUCTIONS[currentMode] || '';
+  const alpha = 0.7 + Math.sin(time * 3) * 0.15;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.font = 'bold 13px Courier New';
+  ctx.textAlign = 'center';
+  // Background bar
+  ctx.fillStyle = 'rgba(0,10,20,0.85)';
+  const tw = ctx.measureText(text).width + 40;
+  ctx.fillRect(W / 2 - tw / 2, 50, tw, 24);
+  ctx.strokeStyle = COL.cyan + '44';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(W / 2 - tw / 2, 50, tw, 24);
+  // Text
+  ctx.fillStyle = COL.cyan;
+  ctx.fillText(text, W / 2, 66);
+  ctx.restore();
+  ctx.textAlign = 'left';
 }
 
 // ============================================================
@@ -1953,9 +2043,9 @@ function render() {
           }
         }
 
-        // Auto-advance scene after time
+        // Auto-advance scene after time (20s per scene)
         const sceneElapsed = (now - sceneStartTime) / 1000;
-        if (sceneElapsed >= 10 && !sceneAdvanceReady) {
+        if (sceneElapsed >= 20 && !sceneAdvanceReady) {
           if (!checkSceneComplete()) {
             sceneAdvanceReady = true;
             setTimeout(() => {
@@ -1981,6 +2071,8 @@ function render() {
       }
       drawEffects();
       drawCrosshair();
+      // Mode instruction banner
+      drawModeInstruction(time);
       break;
 
     case 'DEBRIEF':
