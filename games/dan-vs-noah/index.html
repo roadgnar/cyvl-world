@@ -551,15 +551,18 @@ function noahPivot() {
 }
 
 function updateNoah(dt) {
-  if (noah.stunTimer > 0) {
-    noah.stunTimer -= dt;
-    return;
-  }
-
+  // Always tick down timers (even when stunned/frozen)
   noah.sprintCooldown = Math.max(0, noah.sprintCooldown - dt);
   noah.pivotCooldown = Math.max(0, noah.pivotCooldown - dt);
   noah.coffeeTimer = Math.max(0, noah.coffeeTimer - dt);
   noah.shieldTimer = Math.max(0, noah.shieldTimer - dt);
+  if (noah.slowTimer > 0) noah.slowTimer -= dt;
+  if (noah.frozenTimer > 0) noah.frozenTimer -= dt;
+
+  if (noah.stunTimer > 0) {
+    noah.stunTimer -= dt;
+    return;
+  }
 
   if (noah.isSprinting) {
     noah.sprintTimer -= dt;
@@ -584,15 +587,9 @@ function updateNoah(dt) {
   if (noah.coffeeTimer > 0) spd *= 1.5;
   if (noah.isSprinting) spd *= 1.8;
   // Slow debuff from emails
-  if (noah.slowTimer > 0) {
-    noah.slowTimer -= dt;
-    spd *= 0.6;
-  }
+  if (noah.slowTimer > 0) spd *= 0.6;
   // Frozen from meeting
-  if (noah.frozenTimer > 0) {
-    noah.frozenTimer -= dt;
-    spd = 0;
-  }
+  if (noah.frozenTimer > 0) spd = 0;
 
   noah.x += dx * spd * dt;
   noah.y += dy * spd * dt;
@@ -933,8 +930,8 @@ function updateTraps(dt) {
     const t = meetingTraps[i];
     const dist = Math.hypot(noah.x - t.x, noah.y - t.y);
     if (dist < t.radius + noah.size/2 && noah.shieldTimer <= 0 && (!noah.frozenTimer || noah.frozenTimer <= 0)) {
-      noah.frozenTimer = 2;
-      showFlash('MANDATORY MEETING!', COL.orange, 1.5);
+      noah.frozenTimer = 1.2;
+      showFlash('MANDATORY MEETING!', COL.orange, 1.0);
       playSound('meeting');
       meetingTraps.splice(i, 1);
     }
@@ -1235,10 +1232,11 @@ function checkDanCollisions() {
         return;
       }
 
-      // Dan catches Noah!
+      // Dan catches the Closer!
       const loss = Math.floor(score * 0.15);
       score = Math.max(0, score - loss);
-      noah.stunTimer = 1;
+      noah.stunTimer = 0.6;
+      noah.shieldTimer = Math.max(noah.shieldTimer, 1.5); // brief invulnerability after catch
       dan.dancingTimer = 1;
       triggerShake(8, 0.5);
       playSound('caught');
@@ -1858,8 +1856,8 @@ function gameLoop(now) {
         );
       }
 
-      // Level timer
-      levelTimer -= dt;
+      // Level timer (pauses while stunned or frozen so player isn't punished unfairly)
+      if (noah.stunTimer <= 0 && noah.frozenTimer <= 0) levelTimer -= dt;
       if (levelTimer <= 0) {
         levelTimer = 0;
         if (level >= MAX_LEVEL) {

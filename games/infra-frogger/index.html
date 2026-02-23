@@ -374,29 +374,32 @@ function createLanes() {
 
   // Platform lane 1 (row 6) — moving right (striping machines)
   lanes.push({
-    row: ROW_PLAT1, dir: 1, speed: 40 * speedMult, type: 'platform',
-    vehicles: createPlatforms(ROW_PLAT1, 1, 40 * speedMult, [
-      { w: 120, h: 40, color: COL.green, label: 'STRIPER' },
-      { w: 100, h: 40, color: COL.green, label: 'STRIPER' },
-    ], Math.max(2, 3 - Math.floor(level / 2)))
+    row: ROW_PLAT1, dir: 1, speed: 35 * speedMult, type: 'platform',
+    vehicles: createPlatforms(ROW_PLAT1, 1, 35 * speedMult, [
+      { w: 160, h: 44, color: COL.green, label: 'STRIPER' },
+      { w: 140, h: 44, color: COL.green, label: 'STRIPER' },
+      { w: 130, h: 44, color: COL.green, label: 'STRIPER' },
+    ], Math.max(3, 5 - Math.floor(level / 2)))
   });
 
   // Platform lane 2 (row 5) — moving left (LiDAR trucks)
   lanes.push({
-    row: ROW_PLAT2, dir: -1, speed: 55 * speedMult, type: 'platform',
-    vehicles: createPlatforms(ROW_PLAT2, -1, 55 * speedMult, [
-      { w: 110, h: 40, color: COL.cyan, label: 'LiDAR' },
-      { w: 90, h: 40, color: COL.cyan, label: 'LiDAR' },
-    ], Math.max(2, 3 - Math.floor(level / 2)))
+    row: ROW_PLAT2, dir: -1, speed: 45 * speedMult, type: 'platform',
+    vehicles: createPlatforms(ROW_PLAT2, -1, 45 * speedMult, [
+      { w: 150, h: 44, color: COL.cyan, label: 'LiDAR' },
+      { w: 130, h: 44, color: COL.cyan, label: 'LiDAR' },
+      { w: 120, h: 44, color: COL.cyan, label: 'LiDAR' },
+    ], Math.max(3, 5 - Math.floor(level / 2)))
   });
 
   // Platform lane 3 (row 4) — moving right (steamrollers)
   lanes.push({
-    row: ROW_PLAT3, dir: 1, speed: 30 * speedMult, type: 'platform',
-    vehicles: createPlatforms(ROW_PLAT3, 1, 30 * speedMult, [
-      { w: 130, h: 42, color: COL.yellow, label: 'ROLLER' },
-      { w: 100, h: 42, color: COL.yellow, label: 'ROLLER' },
-    ], Math.max(2, 3 - Math.floor(level / 2)))
+    row: ROW_PLAT3, dir: 1, speed: 25 * speedMult, type: 'platform',
+    vehicles: createPlatforms(ROW_PLAT3, 1, 25 * speedMult, [
+      { w: 170, h: 46, color: COL.yellow, label: 'ROLLER' },
+      { w: 150, h: 46, color: COL.yellow, label: 'ROLLER' },
+      { w: 140, h: 46, color: COL.yellow, label: 'ROLLER' },
+    ], Math.max(3, 5 - Math.floor(level / 2)))
   });
 
   // Utility hazards
@@ -477,6 +480,7 @@ function initLevel() {
   player.px = 7 * CELL;
   player.py = ROW_START * CELL;
   player.ridingPlatform = null;
+  player.platformGrace = 0;
   player.animAngle = 0;
   highestRow = ROW_START;
   timerMax = Math.max(30, 60 - level * 5);
@@ -494,6 +498,7 @@ function resetPlayer() {
   player.px = 7 * CELL;
   player.py = ROW_START * CELL;
   player.ridingPlatform = null;
+  player.platformGrace = 0;
   highestRow = ROW_START;
   timer = timerMax;
   scanTrail = [];
@@ -693,9 +698,13 @@ function update(dt) {
   if (laneType === LANE_PLATFORM) {
     let onPlatform = false;
     const platLanes = lanes.filter(l => l.row === player.row && l.type === 'platform');
+    // Generous hitbox: player center-point check + wide margin on platforms
+    const pcx = px + CELL / 2;
+    const pcy = py + CELL / 2;
     for (const lane of platLanes) {
       for (const p of lane.vehicles) {
-        if (rectOverlap(px + 8, py + 8, CELL - 16, CELL - 16, p.x, p.y, p.w, p.h)) {
+        // Check if player center is within platform bounds (with generous X margin)
+        if (pcx > p.x - 12 && pcx < p.x + p.w + 12 && pcy > p.y - 6 && pcy < p.y + p.h + 6) {
           onPlatform = true;
           player.ridingPlatform = p;
           // Move player smoothly with platform
@@ -706,10 +715,17 @@ function update(dt) {
       }
       if (onPlatform) break;
     }
+    // Grace period: don't kill immediately when entering platform rows
     if (!onPlatform) {
-      // Fell into unfinished road
-      killPlayer();
-      return;
+      if (!player.platformGrace) player.platformGrace = 0.4;
+      player.platformGrace -= dt;
+      if (player.platformGrace <= 0) {
+        player.platformGrace = 0;
+        killPlayer();
+        return;
+      }
+    } else {
+      player.platformGrace = 0;
     }
     // Kill if carried off screen
     if (player.px < -CELL || player.px > W) {
