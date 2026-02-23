@@ -74,6 +74,24 @@ var ARCADE_GAMES = [
     path: '/games/somerville-siege/',
     tags: ['ACTION', 'REAL DATA', 'DESKTOP'],
     colors: { primary: '#00e5ff', secondary: '#ff2244', accent: '#00ff88' }
+  },
+  {
+    id: 'infra-frogger',
+    title: 'INFRA-FROGGER',
+    subtitle: 'Cross the Construction Zone',
+    description: 'Guide your LiDAR van across traffic, construction zones, and utility hazards. 5 cities. Don\'t get flattened.',
+    path: '/games/infra-frogger/',
+    tags: ['CLASSIC', 'ARCADE'],
+    colors: { primary: '#00e5ff', secondary: '#ff6600', accent: '#00ff88' }
+  },
+  {
+    id: 'dan-vs-noah',
+    title: 'DAN vs NOAH',
+    subtitle: 'Budget Brawl',
+    description: 'Noah B hustles to earn revenue. Dan McCarthy (VP of Product) chases him down to burn it. Survive the synergy.',
+    path: '/games/dan-vs-noah/',
+    tags: ['ACTION', 'COMEDY'],
+    colors: { primary: '#00ff88', secondary: '#ff2244', accent: '#ffd700' }
   }
 ];
 

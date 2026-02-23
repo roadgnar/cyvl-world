@@ -1,0 +1,1919 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DAN vs NOAH — Budget Brawl</title>
+<script defer src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script defer src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script defer src="/shared/leaderboard.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #0a0a1a;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  overflow: hidden;
+}
+canvas {
+  display: block;
+  image-rendering: pixelated;
+  border: 1px solid #00e5ff33;
+  box-shadow: 0 0 30px #00e5ff22, inset 0 0 30px #00e5ff08;
+}
+</style>
+</head>
+<body>
+<script src="/shared/arcade-nav.js"></script>
+<canvas id="game"></canvas>
+<script>
+// ============================================================
+// DAN vs NOAH — BUDGET BRAWL
+// A CYVL Arcade Original
+// ============================================================
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+const W = 900;
+const H = 700;
+canvas.width = W;
+canvas.height = H;
+
+// Colors
+const COL = {
+  bg: '#0a0a1a',
+  cyan: '#00e5ff',
+  green: '#00ff88',
+  orange: '#ff6600',
+  red: '#ff2244',
+  purple: '#aa44ff',
+  yellow: '#ffee00',
+  gold: '#ffd700',
+  white: '#ffffff',
+  darkGray: '#1a1a2e',
+  medGray: '#2a2a3e',
+  brown: '#8B4513',
+};
+
+// ============================================================
+// WEB AUDIO — Sound Effects
+// ============================================================
+let audioCtx = null;
+function ensureAudio() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+}
+
+function playSound(type) {
+  ensureAudio();
+  const now = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+
+  switch (type) {
+    case 'collect':
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(523, now);
+      osc.frequency.exponentialRampToValueAtTime(1047, now + 0.1);
+      gain.gain.setValueAtTime(0.2, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+      osc.start(now);
+      osc.stop(now + 0.2);
+      break;
+    case 'bigCollect':
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(440, now);
+      osc.frequency.exponentialRampToValueAtTime(880, now + 0.1);
+      osc.frequency.exponentialRampToValueAtTime(1320, now + 0.2);
+      gain.gain.setValueAtTime(0.25, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+      osc.start(now);
+      osc.stop(now + 0.35);
+      break;
+    case 'caught':
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(400, now);
+      osc.frequency.exponentialRampToValueAtTime(80, now + 0.5);
+      gain.gain.setValueAtTime(0.25, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+      osc.start(now);
+      osc.stop(now + 0.5);
+      break;
+    case 'sprint':
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(200, now);
+      osc.frequency.exponentialRampToValueAtTime(600, now + 0.15);
+      gain.gain.setValueAtTime(0.12, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+      osc.start(now);
+      osc.stop(now + 0.15);
+      break;
+    case 'pivot':
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(800, now);
+      osc.frequency.exponentialRampToValueAtTime(200, now + 0.12);
+      osc.frequency.exponentialRampToValueAtTime(1200, now + 0.2);
+      gain.gain.setValueAtTime(0.15, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+      osc.start(now);
+      osc.stop(now + 0.2);
+      break;
+    case 'coffee':
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(300, now);
+      osc.frequency.exponentialRampToValueAtTime(900, now + 0.1);
+      osc.frequency.exponentialRampToValueAtTime(600, now + 0.3);
+      gain.gain.setValueAtTime(0.18, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+      osc.start(now);
+      osc.stop(now + 0.3);
+      break;
+    case 'shield':
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(440, now);
+      osc.frequency.setValueAtTime(554, now + 0.1);
+      osc.frequency.setValueAtTime(659, now + 0.2);
+      osc.frequency.setValueAtTime(880, now + 0.3);
+      gain.gain.setValueAtTime(0.15, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
+      osc.start(now);
+      osc.stop(now + 0.45);
+      break;
+    case 'meeting':
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(150, now);
+      osc.frequency.setValueAtTime(100, now + 0.2);
+      osc.frequency.setValueAtTime(150, now + 0.4);
+      gain.gain.setValueAtTime(0.1, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+      osc.start(now);
+      osc.stop(now + 0.5);
+      break;
+    case 'email':
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(2000, now);
+      osc.frequency.exponentialRampToValueAtTime(500, now + 0.1);
+      gain.gain.setValueAtTime(0.08, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+      osc.start(now);
+      osc.stop(now + 0.1);
+      break;
+    case 'reorg':
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(100, now);
+      osc.frequency.exponentialRampToValueAtTime(2000, now + 0.3);
+      osc.frequency.exponentialRampToValueAtTime(100, now + 0.5);
+      gain.gain.setValueAtTime(0.15, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+      osc.start(now);
+      osc.stop(now + 0.5);
+      break;
+    case 'levelUp':
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(440, now);
+      osc.frequency.setValueAtTime(554, now + 0.15);
+      osc.frequency.setValueAtTime(659, now + 0.3);
+      osc.frequency.setValueAtTime(880, now + 0.45);
+      gain.gain.setValueAtTime(0.2, now);
+      gain.gain.linearRampToValueAtTime(0.2, now + 0.5);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.8);
+      osc.start(now);
+      osc.stop(now + 0.8);
+      break;
+    case 'tick':
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(1200, now);
+      gain.gain.setValueAtTime(0.06, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.03);
+      osc.start(now);
+      osc.stop(now + 0.03);
+      break;
+    case 'bounce':
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(600, now);
+      osc.frequency.exponentialRampToValueAtTime(1200, now + 0.08);
+      gain.gain.setValueAtTime(0.15, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+      osc.start(now);
+      osc.stop(now + 0.12);
+      break;
+    case 'gameOver':
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(440, now);
+      osc.frequency.exponentialRampToValueAtTime(110, now + 1.0);
+      gain.gain.setValueAtTime(0.2, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 1.0);
+      osc.start(now);
+      osc.stop(now + 1.0);
+      break;
+    default:
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(440, now);
+      gain.gain.setValueAtTime(0.1, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+      osc.start(now);
+      osc.stop(now + 0.1);
+  }
+}
+
+// ============================================================
+// GAME STATE
+// ============================================================
+const STATE = { TITLE: 0, PLAYING: 1, LEVEL_COMPLETE: 2, GAME_OVER: 3 };
+let gameState = STATE.TITLE;
+
+let score = 0;
+let displayScore = 0;
+let level = 1;
+let levelTime = 45;
+let levelTimer = 0;
+let levelStartTime = 0;
+
+const LEVEL_NAMES = ['SEED ROUND', 'SERIES A', 'SERIES B', 'SERIES C', 'IPO'];
+const MAX_LEVEL = 5;
+
+// ============================================================
+// INPUT
+// ============================================================
+const keys = {};
+window.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (e.code === 'Enter' && gameState === STATE.TITLE) {
+    startGame();
+  }
+  if (e.code === 'Enter' && gameState === STATE.LEVEL_COMPLETE) {
+    nextLevel();
+  }
+  if (e.code === 'Enter' && gameState === STATE.GAME_OVER) {
+    gameState = STATE.TITLE;
+  }
+  if (e.code === 'Space' && gameState === STATE.PLAYING) {
+    e.preventDefault();
+    noahSprint();
+  }
+  if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
+    if (gameState === STATE.PLAYING) {
+      e.preventDefault();
+      noahPivot();
+    }
+  }
+});
+window.addEventListener('keyup', e => { keys[e.code] = false; });
+canvas.addEventListener('contextmenu', e => {
+  e.preventDefault();
+  if (gameState === STATE.PLAYING) noahPivot();
+});
+
+// ============================================================
+// PARTICLES
+// ============================================================
+let particles = [];
+
+function addParticle(x, y, color, vx, vy, life, size) {
+  particles.push({ x, y, color, vx: vx || (Math.random()-0.5)*3, vy: vy || (Math.random()-0.5)*3, life: life || 1, maxLife: life || 1, size: size || 3 });
+}
+
+function addSparkles(x, y, color, count) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = Math.random() * 4 + 1;
+    addParticle(x, y, color, Math.cos(angle)*speed, Math.sin(angle)*speed, 0.5 + Math.random()*0.5, 2 + Math.random()*3);
+  }
+}
+
+function addMoneyParticles(x, y, count) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = Math.random() * 5 + 2;
+    particles.push({
+      x, y, color: COL.red, vx: Math.cos(angle)*speed, vy: Math.sin(angle)*speed - 2,
+      life: 1.5, maxLife: 1.5, size: 4, text: '$', isMoney: true
+    });
+  }
+}
+
+function updateParticles(dt) {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx * dt * 60;
+    p.y += p.vy * dt * 60;
+    p.life -= dt;
+    if (p.isMoney) p.vy += dt * 2;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+}
+
+function drawParticles() {
+  for (const p of particles) {
+    const alpha = Math.max(0, p.life / p.maxLife);
+    ctx.globalAlpha = alpha;
+    if (p.isMoney) {
+      ctx.fillStyle = p.color;
+      ctx.font = `bold ${p.size * 3}px Courier New`;
+      ctx.fillText('$', p.x, p.y);
+    } else {
+      ctx.fillStyle = p.color;
+      ctx.fillRect(p.x - p.size/2, p.y - p.size/2, p.size, p.size);
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ============================================================
+// SCREEN SHAKE
+// ============================================================
+let shakeAmount = 0;
+let shakeDuration = 0;
+
+function triggerShake(amount, duration) {
+  shakeAmount = amount;
+  shakeDuration = duration;
+}
+
+// ============================================================
+// FLASH TEXT
+// ============================================================
+let flashText = '';
+let flashTimer = 0;
+let flashColor = COL.red;
+
+const CAUGHT_TEXTS = [
+  'SCOPE CREEP!', 'FEATURE REQUEST!', "LET'S REVISIT THIS",
+  'PIVOT!', 'BUDGET CUT!', 'SYNERGY MEETING!',
+  "LET'S TABLE THIS", 'ACTION ITEMS!', 'CIRCLE BACK!',
+  'MANDATORY FUN!', 'QUARTERLY REVIEW!', 'OKR ALIGNMENT!'
+];
+
+const DAN_QUOTES = [
+  "I need to see the roadmap",
+  "Can we add blockchain to this?",
+  "Let's do a design sprint",
+  "Have you tried turning it off and on?",
+  "This needs more stakeholder buy-in",
+  "Let's schedule a sync about the sync",
+  "I'm thinking we pivot to AI",
+  "Can we make it more disruptive?",
+  "We need to leverage our synergies",
+  "Let me run this by my committee"
+];
+
+const NOAH_QUOTES = [
+  "Just let me close this deal!",
+  "Revenue doesn't grow on trees!",
+  "I was about to sign that!",
+  "My commission!",
+  "The investors are watching!",
+  "I had a handshake agreement!",
+  "That was a Fortune 500 client!",
+  "Do you know how long I cold-called for that?!",
+  "The pipeline! THE PIPELINE!",
+  "I was THIS close to quota!"
+];
+
+function showFlash(text, color, duration) {
+  flashText = text;
+  flashColor = color || COL.red;
+  flashTimer = duration || 1.5;
+}
+
+// ============================================================
+// MAP — City Grid
+// ============================================================
+const ROAD_WIDTH = 60;
+const BLOCK_SIZE = 150;
+const GRID_COLS = 6;
+const GRID_ROWS = 5;
+
+// Buildings
+const buildings = [];
+function generateBuildings() {
+  buildings.length = 0;
+  for (let r = 0; r < GRID_ROWS; r++) {
+    for (let c = 0; c < GRID_COLS; c++) {
+      const bx = ROAD_WIDTH + c * (BLOCK_SIZE + ROAD_WIDTH) + 10;
+      const by = ROAD_WIDTH + r * (BLOCK_SIZE + ROAD_WIDTH) + 10;
+      const bw = BLOCK_SIZE - 20;
+      const bh = BLOCK_SIZE - 20;
+      // Some blocks have buildings
+      if (Math.random() < 0.35) {
+        const floors = 2 + Math.floor(Math.random() * 4);
+        const windowColor = Math.random() < 0.5 ? COL.cyan : COL.green;
+        buildings.push({ x: bx, y: by, w: bw, h: bh, floors, windowColor });
+      }
+    }
+  }
+}
+
+let roadDashOffset = 0;
+
+function isOnRoad(x, y) {
+  // Roads are at the edges of each block
+  const cellW = BLOCK_SIZE + ROAD_WIDTH;
+  const modX = ((x % cellW) + cellW) % cellW;
+  const modY = ((y % cellW) + cellW) % cellW;
+  return modX < ROAD_WIDTH || modY < ROAD_WIDTH;
+}
+
+function getRandomRoadPos() {
+  // Return a random position that's on a road
+  const cellW = BLOCK_SIZE + ROAD_WIDTH;
+  for (let attempts = 0; attempts < 100; attempts++) {
+    const x = Math.random() * W;
+    const y = Math.random() * H;
+    if (isOnRoad(x, y)) return { x, y };
+  }
+  // Fallback: place on a horizontal road
+  const row = Math.floor(Math.random() * (GRID_ROWS + 1));
+  return { x: Math.random() * W, y: row * (BLOCK_SIZE + ROAD_WIDTH) + ROAD_WIDTH / 2 };
+}
+
+function drawMap() {
+  // Background
+  ctx.fillStyle = COL.bg;
+  ctx.fillRect(0, 0, W, H);
+
+  // City blocks
+  const cellW = BLOCK_SIZE + ROAD_WIDTH;
+  for (let r = 0; r < GRID_ROWS + 1; r++) {
+    for (let c = 0; c < GRID_COLS + 1; c++) {
+      // Block fill
+      const bx = ROAD_WIDTH + c * cellW;
+      const by = ROAD_WIDTH + r * cellW;
+      ctx.fillStyle = '#0f0f24';
+      ctx.fillRect(bx, by, BLOCK_SIZE, BLOCK_SIZE);
+    }
+  }
+
+  // Roads (horizontal)
+  for (let r = 0; r <= GRID_ROWS + 1; r++) {
+    const ry = r * cellW;
+    ctx.fillStyle = COL.darkGray;
+    ctx.fillRect(0, ry, W, ROAD_WIDTH);
+    // Dashed center line
+    ctx.strokeStyle = '#444466';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([12, 8]);
+    ctx.lineDashOffset = -roadDashOffset;
+    ctx.beginPath();
+    ctx.moveTo(0, ry + ROAD_WIDTH / 2);
+    ctx.lineTo(W, ry + ROAD_WIDTH / 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Roads (vertical)
+  for (let c = 0; c <= GRID_COLS + 1; c++) {
+    const rx = c * cellW;
+    ctx.fillStyle = COL.darkGray;
+    ctx.fillRect(rx, 0, ROAD_WIDTH, H);
+    // Dashed center line
+    ctx.strokeStyle = '#444466';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([12, 8]);
+    ctx.lineDashOffset = -roadDashOffset;
+    ctx.beginPath();
+    ctx.moveTo(rx + ROAD_WIDTH / 2, 0);
+    ctx.lineTo(rx + ROAD_WIDTH / 2, H);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Buildings
+  for (const b of buildings) {
+    ctx.fillStyle = '#161630';
+    ctx.fillRect(b.x, b.y, b.w, b.h);
+    ctx.strokeStyle = '#2a2a4a';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(b.x, b.y, b.w, b.h);
+
+    // Windows
+    const wCols = Math.floor(b.w / 18);
+    const wRows = b.floors;
+    for (let wr = 0; wr < wRows; wr++) {
+      for (let wc = 0; wc < wCols; wc++) {
+        const wx = b.x + 8 + wc * 18;
+        const wy = b.y + 8 + wr * (b.h / wRows);
+        const lit = Math.random() < 0.6;
+        ctx.fillStyle = lit ? (b.windowColor + '88') : '#0a0a18';
+        ctx.fillRect(wx, wy, 8, 6);
+      }
+    }
+  }
+}
+
+// ============================================================
+// NOAH (Player)
+// ============================================================
+let noah = {
+  x: W / 2, y: H / 2,
+  size: 20,
+  speed: 200,
+  vx: 0, vy: 0,
+  dirX: 0, dirY: 1,
+  stunTimer: 0,
+  coffeeTimer: 0,
+  shieldTimer: 0,
+  sprintCooldown: 0,
+  pivotCooldown: 0,
+  isSprinting: false,
+  sprintTimer: 0,
+  trailTimer: 0,
+};
+
+function noahSprint() {
+  if (noah.sprintCooldown <= 0 && noah.stunTimer <= 0) {
+    noah.isSprinting = true;
+    noah.sprintTimer = 0.3;
+    noah.sprintCooldown = 5;
+    playSound('sprint');
+  }
+}
+
+function noahPivot() {
+  if (noah.pivotCooldown <= 0 && noah.stunTimer <= 0) {
+    const dx = noah.dirX || 0;
+    const dy = noah.dirY || 1;
+    const len = Math.sqrt(dx*dx + dy*dy) || 1;
+    noah.x += (dx / len) * 100;
+    noah.y += (dy / len) * 100;
+    // Wrap
+    noah.x = ((noah.x % W) + W) % W;
+    noah.y = ((noah.y % H) + H) % H;
+    noah.pivotCooldown = 8;
+    playSound('pivot');
+    addSparkles(noah.x, noah.y, COL.cyan, 10);
+  }
+}
+
+function updateNoah(dt) {
+  if (noah.stunTimer > 0) {
+    noah.stunTimer -= dt;
+    return;
+  }
+
+  noah.sprintCooldown = Math.max(0, noah.sprintCooldown - dt);
+  noah.pivotCooldown = Math.max(0, noah.pivotCooldown - dt);
+  noah.coffeeTimer = Math.max(0, noah.coffeeTimer - dt);
+  noah.shieldTimer = Math.max(0, noah.shieldTimer - dt);
+
+  if (noah.isSprinting) {
+    noah.sprintTimer -= dt;
+    if (noah.sprintTimer <= 0) noah.isSprinting = false;
+  }
+
+  let dx = 0, dy = 0;
+  if (keys['KeyW'] || keys['ArrowUp']) dy = -1;
+  if (keys['KeyS'] || keys['ArrowDown']) dy = 1;
+  if (keys['KeyA'] || keys['ArrowLeft']) dx = -1;
+  if (keys['KeyD'] || keys['ArrowRight']) dx = 1;
+
+  if (dx !== 0 || dy !== 0) {
+    const len = Math.sqrt(dx*dx + dy*dy);
+    dx /= len;
+    dy /= len;
+    noah.dirX = dx;
+    noah.dirY = dy;
+  }
+
+  let spd = noah.speed;
+  if (noah.coffeeTimer > 0) spd *= 1.5;
+  if (noah.isSprinting) spd *= 1.8;
+  // Slow debuff from emails
+  if (noah.slowTimer > 0) {
+    noah.slowTimer -= dt;
+    spd *= 0.6;
+  }
+  // Frozen from meeting
+  if (noah.frozenTimer > 0) {
+    noah.frozenTimer -= dt;
+    spd = 0;
+  }
+
+  noah.x += dx * spd * dt;
+  noah.y += dy * spd * dt;
+
+  // Wrap around
+  noah.x = ((noah.x % W) + W) % W;
+  noah.y = ((noah.y % H) + H) % H;
+
+  // Trail sparkles
+  noah.trailTimer -= dt;
+  if (noah.trailTimer <= 0 && (dx !== 0 || dy !== 0)) {
+    noah.trailTimer = noah.coffeeTimer > 0 ? 0.03 : 0.08;
+    addParticle(noah.x + (Math.random()-0.5)*8, noah.y + 8, COL.green, (Math.random()-0.5)*0.5, Math.random()*0.5, 0.4, 2);
+  }
+}
+
+function drawNoah() {
+  const x = noah.x;
+  const y = noah.y;
+  const s = noah.size;
+  const time = performance.now() / 1000;
+
+  // Shield aura
+  if (noah.shieldTimer > 0) {
+    ctx.strokeStyle = COL.cyan;
+    ctx.lineWidth = 2;
+    ctx.globalAlpha = 0.4 + Math.sin(time * 8) * 0.3;
+    ctx.beginPath();
+    ctx.arc(x, y, s + 6, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
+  // Coffee aura
+  if (noah.coffeeTimer > 0) {
+    ctx.strokeStyle = COL.yellow;
+    ctx.lineWidth = 2;
+    ctx.globalAlpha = 0.3 + Math.sin(time * 10) * 0.2;
+    ctx.beginPath();
+    ctx.arc(x, y, s + 4, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
+  // Green glow
+  const glowGrad = ctx.createRadialGradient(x, y, 0, x, y, s * 2);
+  glowGrad.addColorStop(0, 'rgba(0, 255, 136, 0.15)');
+  glowGrad.addColorStop(1, 'rgba(0, 255, 136, 0)');
+  ctx.fillStyle = glowGrad;
+  ctx.fillRect(x - s*2, y - s*2, s*4, s*4);
+
+  // Body
+  ctx.fillStyle = COL.green;
+  ctx.beginPath();
+  ctx.arc(x, y, s / 2, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Darker outfit detail
+  ctx.fillStyle = '#00cc66';
+  ctx.fillRect(x - 4, y - 2, 8, 8);
+
+  // Head
+  ctx.fillStyle = '#ffcc99';
+  ctx.beginPath();
+  ctx.arc(x, y - 6, 5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Eyes
+  ctx.fillStyle = '#000';
+  ctx.fillRect(x - 3, y - 8, 2, 2);
+  ctx.fillRect(x + 1, y - 8, 2, 2);
+
+  // Big grin (curved mouth)
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(x, y - 4, 3, 0.1 * Math.PI, 0.9 * Math.PI);
+  ctx.stroke();
+
+  // Crown (gold)
+  ctx.fillStyle = COL.gold;
+  ctx.beginPath();
+  ctx.moveTo(x - 5, y - 12);
+  ctx.lineTo(x - 5, y - 16);
+  ctx.lineTo(x - 3, y - 14);
+  ctx.lineTo(x, y - 18);
+  ctx.lineTo(x + 3, y - 14);
+  ctx.lineTo(x + 5, y - 16);
+  ctx.lineTo(x + 5, y - 12);
+  ctx.closePath();
+  ctx.fill();
+
+  // $ floating above
+  ctx.fillStyle = COL.green;
+  ctx.font = 'bold 10px Courier New';
+  ctx.textAlign = 'center';
+  ctx.fillText('$', x, y - 22 + Math.sin(time * 3) * 2);
+
+  // Stun effect: dizzy stars
+  if (noah.stunTimer > 0) {
+    for (let i = 0; i < 3; i++) {
+      const angle = time * 5 + i * (Math.PI * 2 / 3);
+      const sx = x + Math.cos(angle) * 12;
+      const sy = y - 18 + Math.sin(angle) * 4;
+      ctx.fillStyle = COL.yellow;
+      ctx.font = '8px Courier New';
+      ctx.fillText('*', sx, sy);
+    }
+  }
+
+  // Frozen indicator
+  if (noah.frozenTimer > 0) {
+    ctx.strokeStyle = COL.orange;
+    ctx.lineWidth = 2;
+    ctx.setLineDash([3, 3]);
+    ctx.strokeRect(x - s/2 - 4, y - s/2 - 4, s + 8, s + 8);
+    ctx.setLineDash([]);
+    ctx.fillStyle = COL.orange;
+    ctx.font = 'bold 8px Courier New';
+    ctx.textAlign = 'center';
+    ctx.fillText('MANDATORY', x, y - 26);
+    ctx.fillText('MEETING', x, y - 18);
+  }
+}
+
+// ============================================================
+// DAN McCARTHY (AI Enemy)
+// ============================================================
+let dans = [];
+
+function createDan() {
+  const pos = getRandomRoadPos();
+  // Ensure Dan doesn't spawn too close to Noah
+  while (Math.hypot(pos.x - noah.x, pos.y - noah.y) < 200) {
+    const newPos = getRandomRoadPos();
+    pos.x = newPos.x;
+    pos.y = newPos.y;
+  }
+  return {
+    x: pos.x, y: pos.y,
+    size: 24,
+    baseSpeed: 120,
+    speed: 120,
+    vx: 0, vy: 0,
+    aiAngle: Math.random() * Math.PI * 2,
+    aiDeviation: 0,
+    aiDeviationTimer: 0,
+    trailTimer: 0,
+    meetingCooldown: 8 + Math.random() * 5,
+    emailCooldown: 12 + Math.random() * 5,
+    reorgCooldown: 20 + Math.random() * 10,
+    dancingTimer: 0,
+    danceY: 0,
+  };
+}
+
+function updateDan(dan, dt) {
+  // Dancing after catch
+  if (dan.dancingTimer > 0) {
+    dan.dancingTimer -= dt;
+    dan.danceY = Math.sin(performance.now() / 80) * 5;
+    return;
+  }
+  dan.danceY = 0;
+
+  // Speed increases over time within level
+  const elapsed = performance.now() / 1000 - levelStartTime;
+  const speedMult = 0.6 + Math.min(0.35, elapsed * 0.008) + (level - 1) * 0.05;
+  dan.speed = noah.speed * Math.min(0.95, speedMult);
+
+  // AI: move toward Noah with random deviation
+  dan.aiDeviationTimer -= dt;
+  if (dan.aiDeviationTimer <= 0) {
+    dan.aiDeviationTimer = 0.5 + Math.random() * 0.5;
+    dan.aiDeviation = (Math.random() - 0.5) * (Math.PI / 3); // +/- 30 degrees
+  }
+
+  // Calculate direction to Noah (accounting for wrapping)
+  let dx = noah.x - dan.x;
+  let dy = noah.y - dan.y;
+  // Shortest path with wrapping
+  if (Math.abs(dx) > W / 2) dx = dx > 0 ? dx - W : dx + W;
+  if (Math.abs(dy) > H / 2) dy = dy > 0 ? dy - H : dy + H;
+
+  const angle = Math.atan2(dy, dx) + dan.aiDeviation;
+  const len = Math.sqrt(dx*dx + dy*dy);
+
+  if (len > 5) {
+    dan.x += Math.cos(angle) * dan.speed * dt;
+    dan.y += Math.sin(angle) * dan.speed * dt;
+  }
+
+  // Wrap
+  dan.x = ((dan.x % W) + W) % W;
+  dan.y = ((dan.y % H) + H) % H;
+
+  // Receipt trail
+  dan.trailTimer -= dt;
+  if (dan.trailTimer <= 0) {
+    dan.trailTimer = 0.12;
+    addParticle(dan.x + (Math.random()-0.5)*8, dan.y + 10, COL.red, 0, 0.3, 0.6, 3);
+  }
+
+  // Special attacks
+  dan.meetingCooldown -= dt;
+  dan.emailCooldown -= dt;
+  dan.reorgCooldown -= dt;
+
+  const distToNoah = Math.hypot(noah.x - dan.x, noah.y - dan.y);
+
+  if (dan.meetingCooldown <= 0 && distToNoah < 250) {
+    // Drop a meeting trap
+    meetingTraps.push({
+      x: dan.x + (Math.random()-0.5) * 80,
+      y: dan.y + (Math.random()-0.5) * 80,
+      timer: 5,
+      radius: 30,
+    });
+    dan.meetingCooldown = 10 + Math.random() * 8;
+    playSound('meeting');
+  }
+
+  if (dan.emailCooldown <= 0 && distToNoah < 300) {
+    // Email bomb
+    for (let i = 0; i < 8; i++) {
+      const a = (Math.PI * 2 / 8) * i;
+      emailBombs.push({
+        x: dan.x, y: dan.y,
+        vx: Math.cos(a) * 150,
+        vy: Math.sin(a) * 150,
+        life: 1.5,
+      });
+    }
+    dan.emailCooldown = 14 + Math.random() * 6;
+    playSound('email');
+  }
+
+  if (dan.reorgCooldown <= 0 && distToNoah > 150) {
+    // Teleport near Noah
+    const a = Math.random() * Math.PI * 2;
+    dan.x = noah.x + Math.cos(a) * 120;
+    dan.y = noah.y + Math.sin(a) * 120;
+    dan.x = ((dan.x % W) + W) % W;
+    dan.y = ((dan.y % H) + H) % H;
+    dan.reorgCooldown = 25 + Math.random() * 15;
+    showFlash('REORG!', COL.purple, 1.0);
+    playSound('reorg');
+    addSparkles(dan.x, dan.y, COL.red, 15);
+  }
+}
+
+function drawDan(dan) {
+  const x = dan.x;
+  const y = dan.y + dan.danceY;
+  const s = dan.size;
+  const time = performance.now() / 1000;
+
+  // Red glow
+  const glowGrad = ctx.createRadialGradient(x, y, 0, x, y, s * 2);
+  glowGrad.addColorStop(0, 'rgba(255, 34, 68, 0.15)');
+  glowGrad.addColorStop(1, 'rgba(255, 34, 68, 0)');
+  ctx.fillStyle = glowGrad;
+  ctx.fillRect(x - s*2, y - s*2, s*4, s*4);
+
+  // Body
+  ctx.fillStyle = COL.red;
+  ctx.beginPath();
+  ctx.arc(x, y, s / 2, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Orange outfit detail
+  ctx.fillStyle = COL.orange;
+  ctx.fillRect(x - 5, y - 2, 10, 10);
+
+  // Head
+  ctx.fillStyle = '#ffcc99';
+  ctx.beginPath();
+  ctx.arc(x, y - 7, 6, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Angry eyebrows that track Noah
+  const angleToNoah = Math.atan2(noah.y - y, noah.x - x);
+  const browOffsetX = Math.cos(angleToNoah) * 2;
+
+  ctx.strokeStyle = COL.red;
+  ctx.lineWidth = 2;
+  // Left eyebrow (angled inward)
+  ctx.beginPath();
+  ctx.moveTo(x - 5 + browOffsetX, y - 12);
+  ctx.lineTo(x - 1 + browOffsetX, y - 10);
+  ctx.stroke();
+  // Right eyebrow
+  ctx.beginPath();
+  ctx.moveTo(x + 5 + browOffsetX, y - 12);
+  ctx.lineTo(x + 1 + browOffsetX, y - 10);
+  ctx.stroke();
+
+  // Angry eyes
+  ctx.fillStyle = '#000';
+  ctx.fillRect(x - 4, y - 9, 2, 2);
+  ctx.fillRect(x + 2, y - 9, 2, 2);
+
+  // Frowning mouth
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(x, y - 2, 3, 1.1 * Math.PI, 1.9 * Math.PI);
+  ctx.stroke();
+
+  // VP text above head
+  ctx.fillStyle = COL.red;
+  ctx.font = 'bold 8px Courier New';
+  ctx.textAlign = 'center';
+  ctx.fillText('VP', x, y - 18 + Math.sin(time * 4) * 1);
+
+  // Dancing particles
+  if (dan.dancingTimer > 0) {
+    for (let i = 0; i < 2; i++) {
+      addParticle(x + (Math.random()-0.5)*20, y - 10, COL.red, (Math.random()-0.5)*3, -Math.random()*2, 0.3, 2);
+    }
+  }
+}
+
+// ============================================================
+// MEETING TRAPS & EMAIL BOMBS
+// ============================================================
+let meetingTraps = [];
+let emailBombs = [];
+
+function updateTraps(dt) {
+  for (let i = meetingTraps.length - 1; i >= 0; i--) {
+    meetingTraps[i].timer -= dt;
+    if (meetingTraps[i].timer <= 0) {
+      meetingTraps.splice(i, 1);
+      continue;
+    }
+    // Check if Noah steps in
+    const t = meetingTraps[i];
+    const dist = Math.hypot(noah.x - t.x, noah.y - t.y);
+    if (dist < t.radius + noah.size/2 && noah.shieldTimer <= 0 && (!noah.frozenTimer || noah.frozenTimer <= 0)) {
+      noah.frozenTimer = 2;
+      showFlash('MANDATORY MEETING!', COL.orange, 1.5);
+      playSound('meeting');
+      meetingTraps.splice(i, 1);
+    }
+  }
+
+  for (let i = emailBombs.length - 1; i >= 0; i--) {
+    const e = emailBombs[i];
+    e.x += e.vx * dt;
+    e.y += e.vy * dt;
+    e.life -= dt;
+    // Wrap
+    e.x = ((e.x % W) + W) % W;
+    e.y = ((e.y % H) + H) % H;
+    if (e.life <= 0) {
+      emailBombs.splice(i, 1);
+      continue;
+    }
+    // Check hit on Noah
+    const dist = Math.hypot(noah.x - e.x, noah.y - e.y);
+    if (dist < 15 && noah.shieldTimer <= 0) {
+      noah.slowTimer = 1.5;
+      showFlash('INBOX OVERLOAD!', COL.red, 1.0);
+      emailBombs.splice(i, 1);
+    }
+  }
+}
+
+function drawTraps() {
+  const time = performance.now() / 1000;
+  // Meeting traps
+  for (const t of meetingTraps) {
+    ctx.globalAlpha = Math.min(1, t.timer / 0.5) * (0.5 + Math.sin(time * 6) * 0.2);
+    ctx.fillStyle = COL.orange + '44';
+    ctx.beginPath();
+    ctx.arc(t.x, t.y, t.radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = COL.orange;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = COL.orange;
+    ctx.font = 'bold 7px Courier New';
+    ctx.textAlign = 'center';
+    ctx.fillText('MEETING', t.x, t.y + 3);
+    ctx.globalAlpha = 1;
+  }
+
+  // Email bombs
+  for (const e of emailBombs) {
+    ctx.globalAlpha = Math.min(1, e.life);
+    ctx.fillStyle = COL.red;
+    ctx.fillRect(e.x - 4, e.y - 3, 8, 6);
+    // Envelope flap
+    ctx.strokeStyle = '#cc1133';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(e.x - 4, e.y - 3);
+    ctx.lineTo(e.x, e.y);
+    ctx.lineTo(e.x + 4, e.y - 3);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+}
+
+// ============================================================
+// COLLECTIBLES
+// ============================================================
+let collectibles = [];
+
+const COLLECT_TYPES = {
+  CONTRACT: { symbol: '$', color: COL.green, value: 10000, radius: 10, spawnWeight: 50 },
+  LIDAR: { symbol: 'diamond', color: COL.cyan, value: 25000, radius: 10, spawnWeight: 25 },
+  INFRA: { symbol: 'briefcase', color: COL.gold, value: 50000, radius: 12, spawnWeight: 10, duration: 8 },
+  COFFEE: { symbol: 'coffee', color: '#8B4513', value: 0, radius: 8, spawnWeight: 10 },
+  SHIELD: { symbol: 'shield', color: COL.cyan, value: 0, radius: 10, spawnWeight: 5 },
+};
+
+function spawnCollectible(typeKey) {
+  const type = COLLECT_TYPES[typeKey];
+  const pos = getRandomRoadPos();
+  const c = {
+    x: pos.x, y: pos.y,
+    type: typeKey,
+    ...type,
+    timer: type.duration || 999,
+    pulse: Math.random() * Math.PI * 2,
+  };
+  // Scale value by level
+  if (c.value > 0) c.value = Math.floor(c.value * (1 + (level - 1) * 0.3));
+  collectibles.push(c);
+}
+
+let spawnTimer = 0;
+
+function updateCollectibles(dt) {
+  // Spawn logic
+  spawnTimer -= dt;
+  if (spawnTimer <= 0) {
+    const spawnRate = Math.max(0.5, 1.5 - level * 0.15);
+    spawnTimer = spawnRate;
+    // Pick type by weight
+    const totalWeight = Object.values(COLLECT_TYPES).reduce((s, t) => s + t.spawnWeight, 0);
+    let r = Math.random() * totalWeight;
+    for (const [key, type] of Object.entries(COLLECT_TYPES)) {
+      r -= type.spawnWeight;
+      if (r <= 0) {
+        // Max collectibles on screen
+        if (collectibles.length < 8 + level * 2) {
+          spawnCollectible(key);
+        }
+        break;
+      }
+    }
+  }
+
+  // Update & collect
+  for (let i = collectibles.length - 1; i >= 0; i--) {
+    const c = collectibles[i];
+    c.timer -= dt;
+    c.pulse += dt * 4;
+    if (c.timer <= 0) {
+      collectibles.splice(i, 1);
+      continue;
+    }
+
+    // Check collection by Noah
+    const dist = Math.hypot(noah.x - c.x, noah.y - c.y);
+    if (dist < c.radius + noah.size / 2) {
+      collectibles.splice(i, 1);
+
+      switch (c.type) {
+        case 'CONTRACT':
+          score += c.value;
+          addSparkles(c.x, c.y, COL.green, 8);
+          playSound('collect');
+          break;
+        case 'LIDAR':
+          score += c.value;
+          addSparkles(c.x, c.y, COL.cyan, 12);
+          playSound('bigCollect');
+          break;
+        case 'INFRA':
+          score += c.value;
+          addSparkles(c.x, c.y, COL.gold, 16);
+          playSound('bigCollect');
+          showFlash('+$' + (c.value / 1000) + 'K DEAL!', COL.gold, 1.0);
+          break;
+        case 'COFFEE':
+          noah.coffeeTimer = 3;
+          addSparkles(c.x, c.y, '#8B4513', 8);
+          playSound('coffee');
+          showFlash('CAFFEINATED!', '#8B4513', 0.8);
+          break;
+        case 'SHIELD':
+          noah.shieldTimer = 4;
+          addSparkles(c.x, c.y, COL.cyan, 12);
+          playSound('shield');
+          showFlash('SHIELDED!', COL.cyan, 0.8);
+          break;
+      }
+    }
+  }
+}
+
+function drawCollectibles() {
+  const time = performance.now() / 1000;
+
+  for (const c of collectibles) {
+    const pulse = 1 + Math.sin(c.pulse) * 0.15;
+    const x = c.x;
+    const y = c.y;
+
+    // Glow
+    ctx.globalAlpha = 0.3 + Math.sin(c.pulse) * 0.15;
+    const glow = ctx.createRadialGradient(x, y, 0, x, y, c.radius * 2.5);
+    glow.addColorStop(0, c.color + '44');
+    glow.addColorStop(1, c.color + '00');
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(x, y, c.radius * 2.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    switch (c.type) {
+      case 'CONTRACT':
+        // Green dollar sign
+        ctx.fillStyle = COL.green;
+        ctx.font = `bold ${14 * pulse}px Courier New`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('$', x, y);
+        ctx.textBaseline = 'alphabetic';
+        break;
+
+      case 'LIDAR':
+        // Rotating diamond
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(time * 3);
+        ctx.fillStyle = COL.cyan;
+        ctx.beginPath();
+        ctx.moveTo(0, -10 * pulse);
+        ctx.lineTo(8 * pulse, 0);
+        ctx.lineTo(0, 10 * pulse);
+        ctx.lineTo(-8 * pulse, 0);
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = '#ffffff44';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.restore();
+        break;
+
+      case 'INFRA':
+        // Gold briefcase
+        ctx.fillStyle = COL.gold;
+        const bw = 14 * pulse, bh = 10 * pulse;
+        ctx.fillRect(x - bw/2, y - bh/2, bw, bh);
+        // Handle
+        ctx.strokeStyle = '#cc9900';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(x, y - bh/2, 4, Math.PI, 0);
+        ctx.stroke();
+        // Clasp
+        ctx.fillStyle = '#cc9900';
+        ctx.fillRect(x - 2, y - 1, 4, 3);
+        break;
+
+      case 'COFFEE':
+        // Brown cup
+        ctx.fillStyle = '#8B4513';
+        ctx.fillRect(x - 5, y - 4, 10, 10);
+        ctx.fillRect(x - 6, y - 5, 12, 3);
+        // Handle
+        ctx.strokeStyle = '#8B4513';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(x + 7, y + 1, 3, -Math.PI/2, Math.PI/2);
+        ctx.stroke();
+        // Steam
+        for (let s = 0; s < 3; s++) {
+          ctx.strokeStyle = '#ffffff44';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          const sx = x - 3 + s * 3;
+          const sOff = Math.sin(time * 4 + s) * 2;
+          ctx.moveTo(sx, y - 6);
+          ctx.quadraticCurveTo(sx + sOff, y - 10, sx, y - 14);
+          ctx.stroke();
+        }
+        break;
+
+      case 'SHIELD':
+        // Cyan shield
+        ctx.strokeStyle = COL.cyan;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(x, y, 8 * pulse, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(x, y, 5 * pulse, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillStyle = COL.cyan + '44';
+        ctx.beginPath();
+        ctx.arc(x, y, 5 * pulse, 0, Math.PI * 2);
+        ctx.fill();
+        break;
+    }
+
+    // Flashing timer for rare items
+    if (c.type === 'INFRA' && c.timer < 3) {
+      ctx.globalAlpha = (Math.sin(time * 10) > 0) ? 1 : 0.3;
+      ctx.globalAlpha = 1;
+    }
+  }
+}
+
+// ============================================================
+// COLLISION: Dan catches Noah
+// ============================================================
+function checkDanCollisions() {
+  if (noah.stunTimer > 0 || noah.frozenTimer > 0) return;
+
+  for (const dan of dans) {
+    if (dan.dancingTimer > 0) continue;
+    const dist = Math.hypot(noah.x - dan.x, noah.y - dan.y);
+    if (dist < (noah.size/2 + dan.size/2)) {
+      if (noah.shieldTimer > 0) {
+        // Bounce Dan away
+        const angle = Math.atan2(dan.y - noah.y, dan.x - noah.x);
+        dan.x += Math.cos(angle) * 80;
+        dan.y += Math.sin(angle) * 80;
+        dan.x = ((dan.x % W) + W) % W;
+        dan.y = ((dan.y % H) + H) % H;
+        playSound('bounce');
+        addSparkles((noah.x + dan.x)/2, (noah.y + dan.y)/2, COL.cyan, 10);
+        showFlash('BOUNCED!', COL.cyan, 0.6);
+        return;
+      }
+
+      // Dan catches Noah!
+      const loss = Math.floor(score * 0.15);
+      score = Math.max(0, score - loss);
+      noah.stunTimer = 1;
+      dan.dancingTimer = 1;
+      triggerShake(8, 0.5);
+      playSound('caught');
+
+      // Money flying away
+      addMoneyParticles(noah.x, noah.y, 10);
+
+      // Flash funny text
+      const text = CAUGHT_TEXTS[Math.floor(Math.random() * CAUGHT_TEXTS.length)];
+      showFlash(text, COL.red, 1.5);
+
+      // Dan rage particles
+      addSparkles(dan.x, dan.y, COL.red, 15);
+    }
+  }
+}
+
+// ============================================================
+// GAME FLOW
+// ============================================================
+function startGame() {
+  playSound('levelUp');
+  gameState = STATE.PLAYING;
+  score = 0;
+  displayScore = 0;
+  level = 1;
+  particles = [];
+  collectibles = [];
+  meetingTraps = [];
+  emailBombs = [];
+  initLevel();
+}
+
+function initLevel() {
+  noah.x = W / 2;
+  noah.y = H / 2;
+  noah.stunTimer = 0;
+  noah.coffeeTimer = 0;
+  noah.shieldTimer = 0;
+  noah.slowTimer = 0;
+  noah.frozenTimer = 0;
+  noah.sprintCooldown = 0;
+  noah.pivotCooldown = 0;
+  noah.isSprinting = false;
+
+  dans = [];
+  const danCount = Math.min(4, level);
+  for (let i = 0; i < danCount; i++) {
+    dans.push(createDan());
+  }
+
+  collectibles = [];
+  meetingTraps = [];
+  emailBombs = [];
+  particles = [];
+
+  levelTimer = levelTime;
+  levelStartTime = performance.now() / 1000;
+
+  generateBuildings();
+}
+
+function nextLevel() {
+  playSound('levelUp');
+  level++;
+  if (level > MAX_LEVEL) {
+    endGame();
+    return;
+  }
+  gameState = STATE.PLAYING;
+  initLevel();
+}
+
+function endGame() {
+  gameState = STATE.GAME_OVER;
+  playSound('gameOver');
+  if (window.submitScore) window.submitScore('dan-vs-noah', score);
+}
+
+function getGrade(s) {
+  if (s >= 1000000) return 'S';
+  if (s >= 600000) return 'A';
+  if (s >= 350000) return 'B';
+  if (s >= 150000) return 'C';
+  if (s >= 50000) return 'D';
+  return 'F';
+}
+
+function getGradeColor(grade) {
+  switch (grade) {
+    case 'S': return COL.gold;
+    case 'A': return COL.green;
+    case 'B': return COL.cyan;
+    case 'C': return COL.yellow;
+    case 'D': return COL.orange;
+    default: return COL.red;
+  }
+}
+
+// ============================================================
+// HUD
+// ============================================================
+function drawHUD() {
+  // Revenue (top-left)
+  // Smooth counter
+  if (displayScore < score) {
+    const diff = score - displayScore;
+    displayScore += Math.max(1, Math.ceil(diff * 0.1));
+    if (displayScore > score) displayScore = score;
+    // Tick sound occasionally
+    if (Math.random() < 0.15) playSound('tick');
+  }
+  if (displayScore > score) displayScore = score;
+
+  ctx.fillStyle = COL.green;
+  ctx.font = 'bold 16px Courier New';
+  ctx.textAlign = 'left';
+  ctx.fillText('CYVL REVENUE: $' + displayScore.toLocaleString(), 15, 25);
+
+  // Level name (top-center)
+  ctx.fillStyle = COL.cyan;
+  ctx.font = 'bold 18px Courier New';
+  ctx.textAlign = 'center';
+  ctx.fillText(LEVEL_NAMES[level - 1] || 'LEVEL ' + level, W / 2, 25);
+
+  // Level number
+  ctx.font = '12px Courier New';
+  ctx.fillStyle = COL.white + '88';
+  ctx.fillText('LEVEL ' + level + ' / ' + MAX_LEVEL, W / 2, 42);
+
+  // Timer (top-right)
+  const timerPct = Math.max(0, levelTimer / levelTime);
+  ctx.fillStyle = '#1a1a2e';
+  ctx.fillRect(W - 210, 12, 200, 16);
+  const timerColor = timerPct > 0.3 ? COL.cyan : (timerPct > 0.1 ? COL.orange : COL.red);
+  ctx.fillStyle = timerColor;
+  ctx.fillRect(W - 210, 12, 200 * timerPct, 16);
+  ctx.strokeStyle = timerColor + '88';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(W - 210, 12, 200, 16);
+  ctx.fillStyle = COL.white;
+  ctx.font = '10px Courier New';
+  ctx.textAlign = 'center';
+  ctx.fillText(Math.ceil(levelTimer) + 's', W - 110, 24);
+
+  // Sprint cooldown (bottom-left)
+  const sprintReady = noah.sprintCooldown <= 0;
+  ctx.fillStyle = '#1a1a2e';
+  ctx.fillRect(15, H - 35, 120, 14);
+  if (sprintReady) {
+    ctx.fillStyle = COL.green;
+    ctx.fillRect(15, H - 35, 120, 14);
+  } else {
+    ctx.fillStyle = COL.green + '44';
+    ctx.fillRect(15, H - 35, 120 * (1 - noah.sprintCooldown / 5), 14);
+  }
+  ctx.strokeStyle = COL.green + '66';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(15, H - 35, 120, 14);
+  ctx.fillStyle = COL.white;
+  ctx.font = '9px Courier New';
+  ctx.textAlign = 'center';
+  ctx.fillText(sprintReady ? 'SPRINT [SPACE]' : 'SPRINT ' + noah.sprintCooldown.toFixed(1) + 's', 75, H - 25);
+
+  // Pivot cooldown (bottom)
+  const pivotReady = noah.pivotCooldown <= 0;
+  ctx.fillStyle = '#1a1a2e';
+  ctx.fillRect(150, H - 35, 120, 14);
+  if (pivotReady) {
+    ctx.fillStyle = COL.purple;
+    ctx.fillRect(150, H - 35, 120, 14);
+  } else {
+    ctx.fillStyle = COL.purple + '44';
+    ctx.fillRect(150, H - 35, 120 * (1 - noah.pivotCooldown / 8), 14);
+  }
+  ctx.strokeStyle = COL.purple + '66';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(150, H - 35, 120, 14);
+  ctx.fillStyle = COL.white;
+  ctx.font = '9px Courier New';
+  ctx.textAlign = 'center';
+  ctx.fillText(pivotReady ? 'PIVOT [SHIFT]' : 'PIVOT ' + noah.pivotCooldown.toFixed(1) + 's', 210, H - 25);
+
+  // Coffee & Shield indicators
+  if (noah.coffeeTimer > 0) {
+    ctx.fillStyle = '#8B4513';
+    ctx.font = 'bold 12px Courier New';
+    ctx.textAlign = 'left';
+    ctx.fillText('COFFEE: ' + noah.coffeeTimer.toFixed(1) + 's', 300, H - 25);
+  }
+  if (noah.shieldTimer > 0) {
+    ctx.fillStyle = COL.cyan;
+    ctx.font = 'bold 12px Courier New';
+    ctx.textAlign = 'left';
+    ctx.fillText('SHIELD: ' + noah.shieldTimer.toFixed(1) + 's', 440, H - 25);
+  }
+
+  // Dan counter (bottom-right)
+  ctx.fillStyle = COL.red;
+  ctx.font = 'bold 12px Courier New';
+  ctx.textAlign = 'right';
+  ctx.fillText('DANS: ' + dans.length, W - 15, H - 25);
+}
+
+// ============================================================
+// FLASH TEXT DISPLAY
+// ============================================================
+function drawFlashText() {
+  if (flashTimer <= 0) return;
+  const alpha = Math.min(1, flashTimer * 2);
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = flashColor;
+  ctx.font = 'bold 36px Courier New';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  // Background
+  const metrics = ctx.measureText(flashText);
+  ctx.fillStyle = '#0a0a1a' + 'cc';
+  ctx.fillRect(W/2 - metrics.width/2 - 15, H/2 - 25, metrics.width + 30, 50);
+
+  ctx.fillStyle = flashColor;
+  ctx.fillText(flashText, W / 2, H / 2);
+  ctx.textBaseline = 'alphabetic';
+  ctx.globalAlpha = 1;
+}
+
+// ============================================================
+// CRT SCANLINES
+// ============================================================
+function drawScanlines() {
+  ctx.globalAlpha = 0.04;
+  ctx.fillStyle = '#000';
+  for (let y = 0; y < H; y += 3) {
+    ctx.fillRect(0, y, W, 1);
+  }
+  ctx.globalAlpha = 1;
+
+  // Vignette
+  const vignette = ctx.createRadialGradient(W/2, H/2, W*0.3, W/2, H/2, W*0.7);
+  vignette.addColorStop(0, 'rgba(0,0,0,0)');
+  vignette.addColorStop(1, 'rgba(0,0,0,0.3)');
+  ctx.fillStyle = vignette;
+  ctx.fillRect(0, 0, W, H);
+}
+
+// ============================================================
+// TITLE SCREEN
+// ============================================================
+let titleTime = 0;
+
+function drawTitle() {
+  titleTime += 1/60;
+
+  ctx.fillStyle = COL.bg;
+  ctx.fillRect(0, 0, W, H);
+
+  // Scrolling grid background
+  ctx.strokeStyle = '#1a1a3a';
+  ctx.lineWidth = 1;
+  const gridSize = 40;
+  const offset = (titleTime * 20) % gridSize;
+  for (let x = -gridSize + offset; x < W + gridSize; x += gridSize) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, H);
+    ctx.stroke();
+  }
+  for (let y = -gridSize + offset; y < H + gridSize; y += gridSize) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(W, y);
+    ctx.stroke();
+  }
+
+  // Title: DAN vs NOAH
+  const titleY = 180;
+
+  // DAN (red side)
+  ctx.fillStyle = COL.red;
+  ctx.font = 'bold 72px Courier New';
+  ctx.textAlign = 'center';
+  ctx.fillText('DAN', W/2 - 130, titleY);
+
+  // vs
+  ctx.fillStyle = COL.white;
+  ctx.font = 'bold 36px Courier New';
+  ctx.fillText('vs', W/2, titleY - 5);
+
+  // NOAH (green side)
+  ctx.fillStyle = COL.green;
+  ctx.font = 'bold 72px Courier New';
+  ctx.fillText('NOAH', W/2 + 140, titleY);
+
+  // Subtitle
+  ctx.fillStyle = COL.gold;
+  ctx.font = 'bold 28px Courier New';
+  ctx.fillText('BUDGET BRAWL', W / 2, titleY + 50);
+
+  // CYVL label
+  ctx.fillStyle = COL.cyan;
+  ctx.font = 'bold 14px Courier New';
+  ctx.fillText('A CYVL ARCADE ORIGINAL', W / 2, titleY + 80);
+
+  // Draw Dan character (left)
+  const danX = W/2 - 120;
+  const charY = 360;
+
+  // Dan body
+  ctx.fillStyle = COL.red;
+  ctx.beginPath();
+  ctx.arc(danX, charY, 24, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = COL.orange;
+  ctx.fillRect(danX - 10, charY - 4, 20, 16);
+  ctx.fillStyle = '#ffcc99';
+  ctx.beginPath();
+  ctx.arc(danX, charY - 12, 10, 0, Math.PI * 2);
+  ctx.fill();
+  // Angry eyebrows
+  ctx.strokeStyle = COL.red;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(danX - 8, charY - 20);
+  ctx.lineTo(danX - 2, charY - 17);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(danX + 8, charY - 20);
+  ctx.lineTo(danX + 2, charY - 17);
+  ctx.stroke();
+  // Eyes
+  ctx.fillStyle = '#000';
+  ctx.fillRect(danX - 6, charY - 15, 3, 3);
+  ctx.fillRect(danX + 3, charY - 15, 3, 3);
+  // Frown
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(danX, charY - 5, 5, 1.1 * Math.PI, 1.9 * Math.PI);
+  ctx.stroke();
+  // VP text
+  ctx.fillStyle = COL.red;
+  ctx.font = 'bold 12px Courier New';
+  ctx.fillText('VP', danX, charY - 30);
+
+  // Dan label
+  ctx.fillStyle = COL.red;
+  ctx.font = 'bold 14px Courier New';
+  ctx.fillText('DAN McCARTHY', danX, charY + 45);
+  ctx.font = '11px Courier New';
+  ctx.fillStyle = COL.orange;
+  ctx.fillText('VP of Product', danX, charY + 60);
+  ctx.fillStyle = '#888';
+  ctx.font = '10px Courier New';
+  ctx.fillText('"Budget Destroyer"', danX, charY + 75);
+
+  // Draw Noah character (right)
+  const noahX = W/2 + 120;
+
+  ctx.fillStyle = COL.green;
+  ctx.beginPath();
+  ctx.arc(noahX, charY, 20, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#00cc66';
+  ctx.fillRect(noahX - 8, charY - 3, 16, 14);
+  ctx.fillStyle = '#ffcc99';
+  ctx.beginPath();
+  ctx.arc(noahX, charY - 10, 8, 0, Math.PI * 2);
+  ctx.fill();
+  // Eyes
+  ctx.fillStyle = '#000';
+  ctx.fillRect(noahX - 5, charY - 13, 3, 3);
+  ctx.fillRect(noahX + 2, charY - 13, 3, 3);
+  // Grin
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(noahX, charY - 6, 4, 0.1 * Math.PI, 0.9 * Math.PI);
+  ctx.stroke();
+  // Crown
+  ctx.fillStyle = COL.gold;
+  ctx.beginPath();
+  ctx.moveTo(noahX - 7, charY - 20);
+  ctx.lineTo(noahX - 7, charY - 26);
+  ctx.lineTo(noahX - 4, charY - 23);
+  ctx.lineTo(noahX, charY - 28);
+  ctx.lineTo(noahX + 4, charY - 23);
+  ctx.lineTo(noahX + 7, charY - 26);
+  ctx.lineTo(noahX + 7, charY - 20);
+  ctx.closePath();
+  ctx.fill();
+  // $
+  ctx.fillStyle = COL.green;
+  ctx.font = 'bold 14px Courier New';
+  ctx.fillText('$', noahX, charY - 34 + Math.sin(titleTime * 3) * 3);
+
+  // Noah label
+  ctx.fillStyle = COL.green;
+  ctx.font = 'bold 14px Courier New';
+  ctx.fillText('NOAH B', noahX, charY + 45);
+  ctx.font = '11px Courier New';
+  ctx.fillStyle = COL.gold;
+  ctx.fillText('The Money King', noahX, charY + 60);
+  ctx.fillStyle = '#888';
+  ctx.font = '10px Courier New';
+  ctx.fillText('"Revenue Machine"', noahX, charY + 75);
+
+  // VS lightning bolt between them
+  const midX = W / 2;
+  ctx.strokeStyle = COL.yellow + (Math.sin(titleTime * 5) > 0 ? 'ff' : '88');
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(midX - 10, charY - 15);
+  ctx.lineTo(midX + 5, charY - 5);
+  ctx.lineTo(midX - 5, charY + 5);
+  ctx.lineTo(midX + 10, charY + 15);
+  ctx.stroke();
+
+  // Instructions
+  ctx.fillStyle = COL.white;
+  ctx.font = 'bold 18px Courier New';
+  ctx.textAlign = 'center';
+  const blink = Math.sin(titleTime * 4) > 0;
+  if (blink) ctx.fillText('PRESS ENTER TO START', W / 2, 520);
+
+  // Controls
+  ctx.fillStyle = '#666688';
+  ctx.font = '12px Courier New';
+  ctx.fillText('WASD / ARROWS = Move    SPACE = Sprint    SHIFT / Right-Click = Pivot', W / 2, 570);
+  ctx.fillText('Collect contracts and deals. Avoid Dan McCarthy at all costs!', W / 2, 590);
+
+  // Flavor text
+  ctx.fillStyle = COL.cyan + '88';
+  ctx.font = '10px Courier New';
+  ctx.fillText('Noah collects revenue. Dan destroys budgets. Only one can win.', W / 2, 640);
+  ctx.fillText('"In the startup world, the VP of Product is the final boss." - Ancient Proverb', W / 2, 660);
+
+  drawScanlines();
+}
+
+// ============================================================
+// LEVEL COMPLETE SCREEN
+// ============================================================
+function drawLevelComplete() {
+  ctx.fillStyle = COL.bg;
+  ctx.fillRect(0, 0, W, H);
+
+  // Scrolling grid
+  ctx.strokeStyle = '#1a1a3a';
+  ctx.lineWidth = 1;
+  const gridSize = 40;
+  const offset = (performance.now() / 50) % gridSize;
+  for (let x = -gridSize + offset; x < W + gridSize; x += gridSize) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+  }
+
+  ctx.textAlign = 'center';
+
+  // Level complete
+  ctx.fillStyle = COL.gold;
+  ctx.font = 'bold 36px Courier New';
+  ctx.fillText(LEVEL_NAMES[level - 1] + ' COMPLETE!', W/2, 120);
+
+  // Revenue earned
+  ctx.fillStyle = COL.green;
+  ctx.font = 'bold 24px Courier New';
+  ctx.fillText('CYVL REVENUE: $' + score.toLocaleString(), W/2, 200);
+
+  // Valuation
+  const valuation = score * 8;
+  ctx.fillStyle = COL.cyan;
+  ctx.font = '18px Courier New';
+  ctx.fillText('COMPANY VALUATION: $' + valuation.toLocaleString(), W/2, 240);
+
+  // Dan quote
+  const danQuote = DAN_QUOTES[Math.floor((level - 1 + score) % DAN_QUOTES.length)];
+  ctx.fillStyle = COL.red;
+  ctx.font = 'bold 14px Courier New';
+  ctx.fillText('DAN:', W/2, 310);
+  ctx.font = 'italic 14px Courier New';
+  ctx.fillText('"' + danQuote + '"', W/2, 335);
+
+  // Noah quote
+  const noahQuote = NOAH_QUOTES[Math.floor((level + score) % NOAH_QUOTES.length)];
+  ctx.fillStyle = COL.green;
+  ctx.font = 'bold 14px Courier New';
+  ctx.fillText('NOAH:', W/2, 390);
+  ctx.font = 'italic 14px Courier New';
+  ctx.fillText('"' + noahQuote + '"', W/2, 415);
+
+  // Next level info
+  if (level < MAX_LEVEL) {
+    ctx.fillStyle = COL.orange;
+    ctx.font = '14px Courier New';
+    ctx.fillText('NEXT: ' + LEVEL_NAMES[level] + ' (' + (level + 1) + ' Dans incoming!)', W/2, 480);
+  } else {
+    ctx.fillStyle = COL.gold;
+    ctx.font = 'bold 18px Courier New';
+    ctx.fillText('FINAL RESULTS INCOMING...', W/2, 480);
+  }
+
+  // Press Enter
+  const blink = Math.sin(performance.now() / 300) > 0;
+  if (blink) {
+    ctx.fillStyle = COL.white;
+    ctx.font = 'bold 18px Courier New';
+    ctx.fillText('PRESS ENTER TO CONTINUE', W/2, 550);
+  }
+
+  drawScanlines();
+}
+
+// ============================================================
+// GAME OVER SCREEN
+// ============================================================
+function drawGameOver() {
+  ctx.fillStyle = COL.bg;
+  ctx.fillRect(0, 0, W, H);
+
+  // Background grid
+  ctx.strokeStyle = '#1a1a3a';
+  ctx.lineWidth = 1;
+  const gridSize = 40;
+  const offset = (performance.now() / 80) % gridSize;
+  for (let x = -gridSize + offset; x < W + gridSize; x += gridSize) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+  }
+
+  ctx.textAlign = 'center';
+
+  const grade = getGrade(score);
+  const gradeColor = getGradeColor(grade);
+
+  // Title
+  ctx.fillStyle = COL.gold;
+  ctx.font = 'bold 42px Courier New';
+  ctx.fillText('BUDGET BRAWL COMPLETE', W/2, 100);
+
+  // Final revenue
+  ctx.fillStyle = COL.green;
+  ctx.font = 'bold 30px Courier New';
+  ctx.fillText('FINAL REVENUE: $' + score.toLocaleString(), W/2, 180);
+
+  // Company valuation
+  const valuation = score * 10;
+  ctx.fillStyle = COL.cyan;
+  ctx.font = 'bold 22px Courier New';
+  ctx.fillText('COMPANY VALUATION: $' + valuation.toLocaleString(), W/2, 225);
+
+  // Grade
+  ctx.fillStyle = gradeColor;
+  ctx.font = 'bold 80px Courier New';
+  ctx.fillText(grade, W/2, 340);
+
+  // Grade label
+  ctx.font = '16px Courier New';
+  const gradeLabels = {
+    'S': 'UNICORN STATUS - Noah is a legend!',
+    'A': 'Series D incoming! Investors are thrilled.',
+    'B': 'Solid growth. The board is cautiously optimistic.',
+    'C': 'Mediocre quarter. Dan keeps scheduling meetings.',
+    'D': 'Struggling. Maybe Dan was right about that pivot.',
+    'F': 'Bankrupt. Dan won. He always wins.',
+  };
+  ctx.fillText(gradeLabels[grade], W/2, 380);
+
+  // Fun stats
+  ctx.fillStyle = '#888';
+  ctx.font = '12px Courier New';
+  ctx.fillText('Dans defeated: 0 (they always come back)', W/2, 440);
+  ctx.fillText('Meetings survived: too many', W/2, 460);
+  ctx.fillText('Emails dodged: not enough', W/2, 480);
+
+  // Dan's final quote
+  ctx.fillStyle = COL.red;
+  ctx.font = 'italic 14px Courier New';
+  ctx.fillText('Dan: "I\'ll see you at the next quarterly review."', W/2, 530);
+
+  // Noah's final quote
+  ctx.fillStyle = COL.green;
+  ctx.font = 'italic 14px Courier New';
+  ctx.fillText('Noah: "I need a raise. And a vacation."', W/2, 560);
+
+  // Press Enter
+  const blink = Math.sin(performance.now() / 300) > 0;
+  if (blink) {
+    ctx.fillStyle = COL.white;
+    ctx.font = 'bold 18px Courier New';
+    ctx.fillText('PRESS ENTER FOR TITLE SCREEN', W/2, 630);
+  }
+
+  drawScanlines();
+}
+
+// ============================================================
+// MAIN GAME LOOP
+// ============================================================
+let lastTime = performance.now();
+
+function gameLoop(now) {
+  requestAnimationFrame(gameLoop);
+  const dt = Math.min((now - lastTime) / 1000, 0.05);
+  lastTime = now;
+
+  switch (gameState) {
+    case STATE.TITLE:
+      drawTitle();
+      break;
+
+    case STATE.PLAYING:
+      // Update
+      roadDashOffset = (roadDashOffset + dt * 30) % 20;
+      flashTimer = Math.max(0, flashTimer - dt);
+
+      // Screen shake
+      if (shakeDuration > 0) {
+        shakeDuration -= dt;
+        ctx.save();
+        ctx.translate(
+          (Math.random() - 0.5) * shakeAmount * 2,
+          (Math.random() - 0.5) * shakeAmount * 2
+        );
+      }
+
+      // Level timer
+      levelTimer -= dt;
+      if (levelTimer <= 0) {
+        levelTimer = 0;
+        if (level >= MAX_LEVEL) {
+          endGame();
+        } else {
+          gameState = STATE.LEVEL_COMPLETE;
+          playSound('levelUp');
+        }
+      }
+
+      updateNoah(dt);
+      for (const dan of dans) updateDan(dan, dt);
+      updateCollectibles(dt);
+      updateTraps(dt);
+      checkDanCollisions();
+      updateParticles(dt);
+
+      // Draw
+      drawMap();
+      drawTraps();
+      drawCollectibles();
+      drawParticles();
+      drawNoah();
+      for (const dan of dans) drawDan(dan);
+      drawHUD();
+      drawFlashText();
+      drawScanlines();
+
+      if (shakeDuration > 0 || shakeDuration + dt > 0) {
+        ctx.restore();
+      }
+      break;
+
+    case STATE.LEVEL_COMPLETE:
+      drawLevelComplete();
+      break;
+
+    case STATE.GAME_OVER:
+      drawGameOver();
+      break;
+  }
+}
+
+// Init noah extra props
+noah.slowTimer = 0;
+noah.frozenTimer = 0;
+
+// Start
+requestAnimationFrame(gameLoop);
+</script>
+</body>
+</html>
