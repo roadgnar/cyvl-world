@@ -711,6 +711,7 @@ function renderMinimapBase() {
 window.ARCADE_NAV_DISABLE_ESC = true;
 
 document.addEventListener('keydown', e => {
+  if (typeof CyvlLeaderboard !== 'undefined' && CyvlLeaderboard.isOpen()) return;
   keys[e.key.toLowerCase()] = true;
   keys[e.code] = true;
   if (e.key === 'Escape') {

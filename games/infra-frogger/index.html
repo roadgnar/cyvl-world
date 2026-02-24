@@ -508,6 +508,7 @@ function resetPlayer() {
 // INPUT
 // ============================================================
 document.addEventListener('keydown', e => {
+  if (typeof CyvlLeaderboard !== 'undefined' && CyvlLeaderboard.isOpen()) return;
   keys[e.key] = true;
 
   if (gameState === STATE.TITLE) {

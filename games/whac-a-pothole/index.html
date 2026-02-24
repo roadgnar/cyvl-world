@@ -927,6 +927,7 @@ canvas.addEventListener('touchstart', (e) => {
 }, { passive: false });
 
 document.addEventListener('keydown', (e) => {
+  if (typeof CyvlLeaderboard !== 'undefined' && CyvlLeaderboard.isOpen()) return;
   if (e.key === 'Enter') {
     ensureAudio();
     if (state === STATE.TITLE) { resetGame(); state = STATE.PLAYING; }

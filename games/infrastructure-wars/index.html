@@ -174,6 +174,7 @@ const KONAMI = [38,38,40,40,37,39,37,39,66,65];
 let mcpMode = false;
 
 document.addEventListener('keydown', e => {
+  if (typeof CyvlLeaderboard !== 'undefined' && CyvlLeaderboard.isOpen()) return;
   keys[e.code] = true;
   if (game.state === 'title') {
     konamiBuffer.push(e.keyCode);

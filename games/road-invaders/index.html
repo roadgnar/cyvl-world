@@ -156,6 +156,7 @@ function playSound(type) {
 // ============================================================
 const keys = {};
 window.addEventListener('keydown', e => {
+  if (typeof CyvlLeaderboard !== 'undefined' && CyvlLeaderboard.isOpen()) return;
   keys[e.code] = true;
   if (['Space', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.code)) {
     e.preventDefault();
@@ -1122,6 +1123,7 @@ function gameLoop(now) {
 
     case 'gameover':
       drawGameOverScreen(dt);
+      if (typeof CyvlLeaderboard !== 'undefined' && CyvlLeaderboard.isOpen()) break;
       if (gameoverTimer > 1.5 && (keys['Enter'] || keys['NumpadEnter'])) {
         state = 'title';
         gameoverTimer = 0;

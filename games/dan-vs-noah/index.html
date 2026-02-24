@@ -242,6 +242,7 @@ const MAX_LEVEL = 5;
 // ============================================================
 const keys = {};
 window.addEventListener('keydown', e => {
+  if (typeof CyvlLeaderboard !== 'undefined' && CyvlLeaderboard.isOpen()) return;
   keys[e.code] = true;
   if (e.code === 'Enter' && gameState === STATE.TITLE) {
     startGame();

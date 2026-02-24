@@ -211,6 +211,7 @@
   });
 
   window.addEventListener('keydown', (e) => {
+    if (typeof CyvlLeaderboard !== 'undefined' && CyvlLeaderboard.isOpen()) return;
     keys[e.key] = true;
     if (e.key === 'Enter') {
       ensureAudio();
@@ -233,6 +234,7 @@
   });
 
   canvas.addEventListener('click', () => {
+    if (typeof CyvlLeaderboard !== 'undefined' && CyvlLeaderboard.isOpen()) return;
     ensureAudio();
     if (state === STATE.TITLE) {
       startGame();

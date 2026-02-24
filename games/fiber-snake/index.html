@@ -640,6 +640,7 @@
   };
 
   document.addEventListener('keydown', (e) => {
+    if (typeof CyvlLeaderboard !== 'undefined' && CyvlLeaderboard.isOpen()) return;
     if (e.key === 'Enter') {
       if (state === STATE.TITLE || state === STATE.GAMEOVER) {
         ensureAudio();

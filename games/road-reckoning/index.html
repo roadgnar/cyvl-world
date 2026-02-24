@@ -2098,6 +2098,7 @@ container.addEventListener('mousemove', (e) => {
 });
 
 canvas.addEventListener('click', (e) => {
+  if (typeof CyvlLeaderboard !== 'undefined' && CyvlLeaderboard.isOpen()) return;
   ensureAudio();
   const coords = getCanvasCoords(e);
 
@@ -2179,6 +2180,7 @@ window.ARCADE_NAV_DISABLE_ESC = true;
 
 // Pause
 document.addEventListener('keydown', (e) => {
+  if (typeof CyvlLeaderboard !== 'undefined' && CyvlLeaderboard.isOpen()) return;
   if (e.key === 'Escape') {
     if (gameState === 'GAMEPLAY') {
       togglePause();

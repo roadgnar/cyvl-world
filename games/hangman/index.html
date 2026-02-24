@@ -358,6 +358,7 @@
   ];
 
   const MAX_WRONG = 8;
+  const MAX_LOSSES = 3;
   const NEXT_ROUND_DELAY = 2200;
 
   // ===================== GAME STATE =====================
@@ -369,6 +370,7 @@
   let losses = 0;
   let round = 1;
   let gameOver = false;
+  let sessionOver = false;
   let wordQueue = [];
   let audioCtx = null;
 
@@ -732,18 +734,39 @@
       losses++;
       lossEl.textContent = losses;
       revealFullWord(false);
-      messageEl.textContent = 'BRIDGE COLLAPSED!';
-      messageEl.className = 'lose';
       soundLose();
-      setTimeout(() => {
-        round++;
-        startRound();
-      }, NEXT_ROUND_DELAY + 500);
+      if (losses >= MAX_LOSSES) {
+        sessionOver = true;
+        messageEl.textContent = 'ALL BRIDGES COLLAPSED! GAME OVER';
+        messageEl.className = 'lose';
+        setTimeout(() => {
+          if (typeof CyvlLeaderboard !== 'undefined') {
+            CyvlLeaderboard.show('hangman', wins, function() {
+              wins = 0; losses = 0; round = 1; sessionOver = false;
+              winEl.textContent = '0'; lossEl.textContent = '0';
+              startRound();
+            });
+          } else {
+            wins = 0; losses = 0; round = 1; sessionOver = false;
+            winEl.textContent = '0'; lossEl.textContent = '0';
+            startRound();
+          }
+        }, NEXT_ROUND_DELAY + 500);
+      } else {
+        messageEl.textContent = 'BRIDGE COLLAPSED! (' + (MAX_LOSSES - losses) + ' LEFT)';
+        messageEl.className = 'lose';
+        setTimeout(() => {
+          round++;
+          startRound();
+        }, NEXT_ROUND_DELAY + 500);
+      }
     }
   }
 
   // ===================== KEYBOARD INPUT =====================
   document.addEventListener('keydown', (e) => {
+    if (typeof CyvlLeaderboard !== 'undefined' && CyvlLeaderboard.isOpen()) return;
+    if (sessionOver) return;
     const key = e.key.toUpperCase();
     if (/^[A-Z]$/.test(key)) {
       handleGuess(key);

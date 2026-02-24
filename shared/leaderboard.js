@@ -159,7 +159,8 @@
 
     // Intercept keyboard
     function onKey(e) {
-      e.stopPropagation();
+      e.stopImmediatePropagation();
+      e.preventDefault();
       if (e.key === 'Escape') { close(); }
       if (e.key === 'Enter') {
         var inp = document.getElementById('cyvl-lb-name-input');
@@ -171,6 +172,7 @@
       }
     }
     document.addEventListener('keydown', onKey, true);
+    overlay.addEventListener('click', function(e) { e.stopPropagation(); });
 
     function close() {
       overlayOpen = false;
@@ -291,6 +293,7 @@
   // ---- Public API ----
   window.CyvlLeaderboard = {
     show: function(gameId, score, onClose) { showOverlay(gameId, score, onClose); },
+    isOpen: function() { return overlayOpen; },
     submit: submitScore,
     get: getLeaderboard,
     renderMini: renderMini,
