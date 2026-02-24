@@ -44,6 +44,26 @@ var ARCADE_GAMES = [
     colors: { primary: '#00ff88', secondary: '#ff2244', accent: '#ffd700' },
     category: 'cyvl'
   },
+  {
+    id: 'road-rash',
+    title: 'ROAD RASH',
+    subtitle: 'Asphalt Assault',
+    description: 'Pseudo-3D motorcycle combat racing. Punch rival bikers, dodge traffic, survive 3 brutal courses.',
+    path: '/games/road-rash/',
+    tags: ['RACING', 'COMBAT', 'DESKTOP'],
+    colors: { primary: '#ff6600', secondary: '#00e5ff', accent: '#ff2244' },
+    category: 'cyvl'
+  },
+  {
+    id: 'road-rage',
+    title: 'ROAD RAGE',
+    subtitle: 'Highway Havoc',
+    description: 'Top-down highway survival. Dodge aggressive drivers, build your RAGE METER, then unleash vehicular chaos.',
+    path: '/games/road-rage/',
+    tags: ['ACTION', 'SURVIVAL', 'DESKTOP'],
+    colors: { primary: '#ff2244', secondary: '#ff6600', accent: '#ffd700' },
+    category: 'cyvl'
+  },
   // ---- CLASSICS ----
   {
     id: 'infra-frogger',
