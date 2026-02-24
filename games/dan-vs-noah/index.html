@@ -233,6 +233,7 @@ let level = 1;
 let levelTime = 45;
 let levelTimer = 0;
 let levelStartTime = 0;
+let noahLives = 3;
 
 const LEVEL_NAMES = ['SEED ROUND', 'SERIES A', 'SERIES B', 'SERIES C', 'IPO'];
 const MAX_LEVEL = 5;
@@ -1234,6 +1235,7 @@ function checkDanCollisions() {
       }
 
       // Dan catches the Closer!
+      noahLives--;
       const loss = Math.floor(score * 0.15);
       score = Math.max(0, score - loss);
       noah.stunTimer = 0.6;
@@ -1251,6 +1253,11 @@ function checkDanCollisions() {
 
       // Dan rage particles
       addSparkles(dan.x, dan.y, COL.red, 15);
+
+      if (noahLives <= 0) {
+        endGame();
+        return;
+      }
     }
   }
 }
@@ -1264,6 +1271,7 @@ function startGame() {
   score = 0;
   displayScore = 0;
   level = 1;
+  noahLives = 3;
   particles = [];
   collectibles = [];
   meetingTraps = [];
@@ -1314,7 +1322,10 @@ function nextLevel() {
 function endGame() {
   gameState = STATE.GAME_OVER;
   playSound('gameOver');
-  if (typeof CyvlLeaderboard !== 'undefined') CyvlLeaderboard.show('budget-brawl', score);
+  var finalScore = score;
+  setTimeout(function() {
+    if (typeof CyvlLeaderboard !== 'undefined') CyvlLeaderboard.show('budget-brawl', finalScore);
+  }, 600);
 }
 
 function getGrade(s) {
@@ -1356,6 +1367,11 @@ function drawHUD() {
   ctx.font = 'bold 16px Courier New';
   ctx.textAlign = 'left';
   ctx.fillText('CYVL REVENUE: $' + displayScore.toLocaleString(), 15, 25);
+
+  // Lives (below revenue)
+  ctx.fillStyle = COL.red;
+  ctx.font = '13px Courier New';
+  ctx.fillText('LIVES: ' + '\u2764 '.repeat(noahLives), 15, 44);
 
   // Level name (top-center)
   ctx.fillStyle = COL.cyan;
@@ -1767,9 +1783,9 @@ function drawGameOver() {
   const gradeColor = getGradeColor(grade);
 
   // Title
-  ctx.fillStyle = COL.gold;
+  ctx.fillStyle = noahLives <= 0 ? COL.red : COL.gold;
   ctx.font = 'bold 42px Courier New';
-  ctx.fillText('BUDGET BRAWL COMPLETE', W/2, 100);
+  ctx.fillText(noahLives <= 0 ? 'BUDGET BRAWL OVER' : 'BUDGET BRAWL COMPLETE', W/2, 100);
 
   // Final revenue
   ctx.fillStyle = COL.green;

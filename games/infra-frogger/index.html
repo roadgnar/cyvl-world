@@ -129,6 +129,7 @@ let shakeIntensity = 0;
 let dyingTimer = 0;
 let levelCompleteTimer = 0;
 let scoreSubmitted = false;
+let leaderboardShown = false;
 
 const CITY_NAMES = ['NASHVILLE', 'BOSTON', 'SOMERVILLE', 'NEW YORK', 'SAN FRANCISCO'];
 const SURVEY_TYPES = ['ARTERIAL', 'COLLECTOR', 'LOCAL', 'HIGHWAY', 'BRIDGE'];
@@ -471,6 +472,7 @@ function initGame() {
   level = 0;
   totalSurveys = 0;
   scoreSubmitted = false;
+  leaderboardShown = false;
   initLevel();
 }
 
@@ -522,8 +524,13 @@ document.addEventListener('keydown', e => {
 
   if (gameState === STATE.GAME_OVER) {
     if (e.key === 'Enter' || e.key === ' ') {
-      playSound('start');
-      gameState = STATE.TITLE;
+      if (!leaderboardShown && typeof CyvlLeaderboard !== 'undefined') {
+        leaderboardShown = true;
+        CyvlLeaderboard.show('infra-frogger', score);
+      } else {
+        playSound('start');
+        gameState = STATE.TITLE;
+      }
     }
     return;
   }
@@ -612,10 +619,7 @@ function update(dt) {
       if (lives <= 0) {
         gameState = STATE.GAME_OVER;
         playSound('gameOver');
-        if (!scoreSubmitted) {
-          scoreSubmitted = true;
-          if (typeof CyvlLeaderboard !== 'undefined') CyvlLeaderboard.show('infra-frogger', score);
-        }
+        showLeaderboard();
       } else {
         resetPlayer();
         gameState = STATE.PLAYING;
@@ -633,10 +637,7 @@ function update(dt) {
         // Won the game!
         gameState = STATE.GAME_OVER;
         playSound('gameOver');
-        if (!scoreSubmitted) {
-          scoreSubmitted = true;
-          if (typeof CyvlLeaderboard !== 'undefined') CyvlLeaderboard.show('infra-frogger', score);
-        }
+        showLeaderboard();
       } else {
         initLevel();
         gameState = STATE.PLAYING;
@@ -766,6 +767,18 @@ function update(dt) {
 
 function rectOverlap(x1, y1, w1, h1, x2, y2, w2, h2) {
   return x1 < x2 + w2 && x1 + w1 > x2 && y1 < y2 + h2 && y1 + h1 > y2;
+}
+
+function showLeaderboard() {
+  if (scoreSubmitted) return;
+  scoreSubmitted = true;
+  var finalScore = score;
+  setTimeout(function() {
+    if (typeof CyvlLeaderboard !== 'undefined') {
+      leaderboardShown = true;
+      CyvlLeaderboard.show('infra-frogger', finalScore);
+    }
+  }, 600);
 }
 
 function killPlayer() {
@@ -1525,7 +1538,7 @@ function drawGameOver() {
   if (Math.sin(frameCount * 0.08) > 0) {
     ctx.fillStyle = COL.green;
     ctx.font = 'bold 18px Courier New';
-    ctx.fillText('PRESS ENTER TO CONTINUE', W / 2, 500);
+    ctx.fillText(leaderboardShown ? 'PRESS ENTER TO CONTINUE' : 'PRESS ENTER FOR LEADERBOARD', W / 2, 500);
   }
 
   drawCRT();
