@@ -7,6 +7,7 @@
 <script defer src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script defer src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 <script defer src="/shared/leaderboard.js"></script>
+<script defer src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
@@ -224,8 +225,26 @@ function playSound(type) {
 // ============================================================
 // GAME STATE
 // ============================================================
-const STATE = { TITLE: 0, PLAYING: 1, LEVEL_COMPLETE: 2, GAME_OVER: 3 };
+const STATE = { TITLE: 0, PLAYING: 1, LEVEL_COMPLETE: 2, GAME_OVER: 3, ONLINE_LOBBY: 4 };
 let gameState = STATE.TITLE;
+
+// ============================================================
+// MULTIPLAYER STATE
+// ============================================================
+let gameMode = '1P'; // '1P', '2P_LOCAL', '2P_ONLINE'
+let titleSelection = 0; // 0=1P, 1=2P LOCAL, 2=2P ONLINE
+function is2P() { return gameMode !== '1P'; }
+
+// Online state
+let peer = null;
+let conn = null;
+let isHost = false;
+let roomCode = '';
+let onlineState = 'NONE'; // NONE, CREATING, WAITING, JOINING, CONNECTED, ERROR
+let roomInput = '';
+let netSendTimer = 0;
+let remoteInputs = {};
+let vpWon = false;
 
 let score = 0;
 let displayScore = 0;
@@ -245,30 +264,75 @@ const keys = {};
 window.addEventListener('keydown', e => {
   if (typeof CyvlLeaderboard !== 'undefined' && CyvlLeaderboard.isOpen()) return;
   keys[e.code] = true;
-  if (e.code === 'Enter' && gameState === STATE.TITLE) {
-    startGame();
+
+  // --- TITLE SCREEN ---
+  if (gameState === STATE.TITLE) {
+    if (e.code === 'ArrowUp') { titleSelection = (titleSelection - 1 + 3) % 3; e.preventDefault(); }
+    if (e.code === 'ArrowDown') { titleSelection = (titleSelection + 1) % 3; e.preventDefault(); }
+    if (e.code === 'Enter') {
+      if (titleSelection === 0) { gameMode = '1P'; startGame(); }
+      else if (titleSelection === 1) { gameMode = '2P_LOCAL'; startGame(); }
+      else if (titleSelection === 2) {
+        if (typeof Peer !== 'undefined') { gameMode = '2P_ONLINE'; gameState = STATE.ONLINE_LOBBY; onlineState = 'NONE'; }
+      }
+    }
   }
+
+  // --- ONLINE LOBBY ---
+  if (gameState === STATE.ONLINE_LOBBY) {
+    if (e.code === 'Escape') { gameState = STATE.TITLE; cleanupPeer(); }
+    if (onlineState === 'NONE') {
+      if (e.code === 'KeyC') createRoom();
+      if (e.code === 'KeyJ') { onlineState = 'JOINING'; roomInput = ''; }
+    }
+    if (onlineState === 'JOINING') {
+      if (e.code === 'Backspace') { roomInput = roomInput.slice(0, -1); e.preventDefault(); }
+      if (e.code === 'Enter' && roomInput.length === 4) joinRoom(roomInput);
+      if (e.key.length === 1 && /[A-Za-z]/.test(e.key) && roomInput.length < 4) {
+        roomInput += e.key.toUpperCase();
+      }
+    }
+    if (onlineState === 'ERROR' && e.code === 'Enter') { onlineState = 'NONE'; }
+  }
+
+  // --- LEVEL COMPLETE / GAME OVER ---
   if (e.code === 'Enter' && gameState === STATE.LEVEL_COMPLETE) {
-    nextLevel();
+    if (gameMode !== '2P_ONLINE' || isHost) nextLevel();
   }
   if (e.code === 'Enter' && gameState === STATE.GAME_OVER) {
+    if (gameMode === '2P_ONLINE') cleanupPeer();
+    gameMode = '1P'; // Reset mode on return to title
     gameState = STATE.TITLE;
   }
-  if (e.code === 'Space' && gameState === STATE.PLAYING) {
-    e.preventDefault();
-    noahSprint();
-  }
-  if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
-    if (gameState === STATE.PLAYING) {
-      e.preventDefault();
-      noahPivot();
+
+  // --- PLAYING ---
+  if (gameState === STATE.PLAYING) {
+    // Noah (P1): Space = sprint, ShiftLeft = pivot (always)
+    if (e.code === 'Space') { e.preventDefault(); noahSprint(); }
+    if (e.code === 'ShiftLeft') { e.preventDefault(); noahPivot(); }
+
+    // In 1P, ShiftRight also works for pivot
+    if (!is2P() && e.code === 'ShiftRight') { e.preventDefault(); noahPivot(); }
+
+    // VP (P2) abilities in 2P local
+    if (is2P() && gameMode === '2P_LOCAL') {
+      if (e.code === 'Period') humanDanMeetingTrap();
+      if (e.code === 'Slash') humanDanEmailBomb();
+      if (e.code === 'ShiftRight') { e.preventDefault(); humanDanReorg(); }
+    }
+
+    // VP (P2) abilities in 2P online — guest sends to host
+    if (gameMode === '2P_ONLINE' && !isHost && conn && conn.open) {
+      if (e.code === 'Period') conn.send({ type: 'ability', action: 'trap' });
+      if (e.code === 'Slash') conn.send({ type: 'ability', action: 'email' });
+      if (e.code === 'ShiftRight') { e.preventDefault(); conn.send({ type: 'ability', action: 'reorg' }); }
     }
   }
 });
 window.addEventListener('keyup', e => { keys[e.code] = false; });
 canvas.addEventListener('contextmenu', e => {
   e.preventDefault();
-  if (gameState === STATE.PLAYING) noahPivot();
+  if (gameState === STATE.PLAYING && !is2P()) noahPivot();
 });
 
 // ============================================================
@@ -572,10 +636,19 @@ function updateNoah(dt) {
   }
 
   let dx = 0, dy = 0;
-  if (keys['KeyW'] || keys['ArrowUp']) dy = -1;
-  if (keys['KeyS'] || keys['ArrowDown']) dy = 1;
-  if (keys['KeyA'] || keys['ArrowLeft']) dx = -1;
-  if (keys['KeyD'] || keys['ArrowRight']) dx = 1;
+  if (is2P()) {
+    // 2P: Noah uses WASD only (arrows reserved for VP)
+    if (keys['KeyW']) dy = -1;
+    if (keys['KeyS']) dy = 1;
+    if (keys['KeyA']) dx = -1;
+    if (keys['KeyD']) dx = 1;
+  } else {
+    // 1P: both WASD and arrows work
+    if (keys['KeyW'] || keys['ArrowUp']) dy = -1;
+    if (keys['KeyS'] || keys['ArrowDown']) dy = 1;
+    if (keys['KeyA'] || keys['ArrowLeft']) dx = -1;
+    if (keys['KeyD'] || keys['ArrowRight']) dx = 1;
+  }
 
   if (dx !== 0 || dy !== 0) {
     const len = Math.sqrt(dx*dx + dy*dy);
@@ -905,7 +978,7 @@ function drawDan(dan) {
   ctx.fillStyle = COL.red;
   ctx.font = 'bold 8px Courier New';
   ctx.textAlign = 'center';
-  ctx.fillText('VP', x, y - 18 + Math.sin(time * 4) * 1);
+  ctx.fillText(is2P() ? 'P2' : 'VP', x, y - 18 + Math.sin(time * 4) * 1);
 
   // Dancing particles
   if (dan.dancingTimer > 0) {
@@ -913,6 +986,120 @@ function drawDan(dan) {
       addParticle(x + (Math.random()-0.5)*20, y - 10, COL.red, (Math.random()-0.5)*3, -Math.random()*2, 0.3, 2);
     }
   }
+}
+
+// ============================================================
+// HUMAN-CONTROLLED VP (2P MODE)
+// ============================================================
+let humanDanMeetingCD = 0;
+let humanDanEmailCD = 0;
+let humanDanReorgCD = 0;
+const HUMAN_DAN_MEETING_CD = 8;
+const HUMAN_DAN_EMAIL_CD = 12;
+const HUMAN_DAN_REORG_CD = 20;
+
+function getHumanDanInputs() {
+  // In online mode, guest sends inputs; host reads remoteInputs
+  if (gameMode === '2P_ONLINE' && isHost) return remoteInputs;
+  // Local 2P: read arrow keys
+  return {
+    up: keys['ArrowUp'] || false,
+    down: keys['ArrowDown'] || false,
+    left: keys['ArrowLeft'] || false,
+    right: keys['ArrowRight'] || false,
+  };
+}
+
+function updateHumanDan(dan, dt) {
+  // Tick cooldowns
+  humanDanMeetingCD = Math.max(0, humanDanMeetingCD - dt);
+  humanDanEmailCD = Math.max(0, humanDanEmailCD - dt);
+  humanDanReorgCD = Math.max(0, humanDanReorgCD - dt);
+
+  // Dancing after catch (same as AI)
+  if (dan.dancingTimer > 0) {
+    dan.dancingTimer -= dt;
+    dan.danceY = Math.sin(performance.now() / 80) * 5;
+    return;
+  }
+  dan.danceY = 0;
+
+  // Speed scales same as AI Dan
+  const elapsed = performance.now() / 1000 - levelStartTime;
+  const speedMult = 0.6 + Math.min(0.35, elapsed * 0.008) + (level - 1) * 0.05;
+  dan.speed = noah.speed * Math.min(0.95, speedMult);
+
+  // Movement from keyboard/remote
+  const inp = getHumanDanInputs();
+  let dx = 0, dy = 0;
+  if (inp.up) dy = -1;
+  if (inp.down) dy = 1;
+  if (inp.left) dx = -1;
+  if (inp.right) dx = 1;
+
+  if (dx !== 0 || dy !== 0) {
+    const len = Math.sqrt(dx * dx + dy * dy);
+    dx /= len;
+    dy /= len;
+  }
+
+  dan.x += dx * dan.speed * dt;
+  dan.y += dy * dan.speed * dt;
+
+  // Wrap
+  dan.x = ((dan.x % W) + W) % W;
+  dan.y = ((dan.y % H) + H) % H;
+
+  // Trail
+  dan.trailTimer -= dt;
+  if (dan.trailTimer <= 0) {
+    dan.trailTimer = 0.12;
+    addParticle(dan.x + (Math.random() - 0.5) * 8, dan.y + 10, COL.red, 0, 0.3, 0.6, 3);
+  }
+}
+
+function humanDanMeetingTrap() {
+  if (humanDanMeetingCD > 0 || !dans.length) return;
+  const dan = dans[0];
+  if (dan.dancingTimer > 0) return;
+  meetingTraps.push({
+    x: dan.x, y: dan.y,
+    timer: 5, radius: 30,
+  });
+  humanDanMeetingCD = HUMAN_DAN_MEETING_CD;
+  playSound('meeting');
+}
+
+function humanDanEmailBomb() {
+  if (humanDanEmailCD > 0 || !dans.length) return;
+  const dan = dans[0];
+  if (dan.dancingTimer > 0) return;
+  for (let i = 0; i < 8; i++) {
+    const a = (Math.PI * 2 / 8) * i;
+    emailBombs.push({
+      x: dan.x, y: dan.y,
+      vx: Math.cos(a) * 150,
+      vy: Math.sin(a) * 150,
+      life: 1.5,
+    });
+  }
+  humanDanEmailCD = HUMAN_DAN_EMAIL_CD;
+  playSound('email');
+}
+
+function humanDanReorg() {
+  if (humanDanReorgCD > 0 || !dans.length) return;
+  const dan = dans[0];
+  if (dan.dancingTimer > 0) return;
+  const a = Math.random() * Math.PI * 2;
+  dan.x = noah.x + Math.cos(a) * 120;
+  dan.y = noah.y + Math.sin(a) * 120;
+  dan.x = ((dan.x % W) + W) % W;
+  dan.y = ((dan.y % H) + H) % H;
+  humanDanReorgCD = HUMAN_DAN_REORG_CD;
+  showFlash('REORG!', COL.purple, 1.0);
+  playSound('reorg');
+  addSparkles(dan.x, dan.y, COL.red, 15);
 }
 
 // ============================================================
@@ -1255,6 +1442,7 @@ function checkDanCollisions() {
       addSparkles(dan.x, dan.y, COL.red, 15);
 
       if (noahLives <= 0) {
+        vpWon = is2P();
         endGame();
         return;
       }
@@ -1272,16 +1460,20 @@ function startGame() {
   displayScore = 0;
   level = 1;
   noahLives = 3;
+  vpWon = false;
   particles = [];
   collectibles = [];
   meetingTraps = [];
   emailBombs = [];
+  if (is2P()) {
+    humanDanMeetingCD = 0;
+    humanDanEmailCD = 0;
+    humanDanReorgCD = 0;
+  }
   initLevel();
 }
 
 function initLevel() {
-  noah.x = W / 2;
-  noah.y = H / 2;
   noah.stunTimer = 0;
   noah.coffeeTimer = 0;
   noah.shieldTimer = 0;
@@ -1291,10 +1483,25 @@ function initLevel() {
   noah.pivotCooldown = 0;
   noah.isSprinting = false;
 
-  dans = [];
-  const danCount = Math.min(4, level);
-  for (let i = 0; i < danCount; i++) {
-    dans.push(createDan());
+  if (is2P()) {
+    // 2P: Noah left, VP right — single human-controlled Dan
+    noah.x = W / 4;
+    noah.y = H / 2;
+    dans = [createDan()];
+    dans[0].x = (W * 3) / 4;
+    dans[0].y = H / 2;
+    humanDanMeetingCD = 3; // Brief initial cooldown so VP can't instantly attack
+    humanDanEmailCD = 3;
+    humanDanReorgCD = 5;
+  } else {
+    // 1P: original logic
+    noah.x = W / 2;
+    noah.y = H / 2;
+    dans = [];
+    const danCount = Math.min(4, level);
+    for (let i = 0; i < danCount; i++) {
+      dans.push(createDan());
+    }
   }
 
   collectibles = [];
@@ -1323,8 +1530,9 @@ function endGame() {
   gameState = STATE.GAME_OVER;
   playSound('gameOver');
   var finalScore = score;
+  var lbId = is2P() ? 'budget-brawl-2p' : 'budget-brawl';
   setTimeout(function() {
-    if (typeof CyvlLeaderboard !== 'undefined') CyvlLeaderboard.show('budget-brawl', finalScore);
+    if (typeof CyvlLeaderboard !== 'undefined') CyvlLeaderboard.show(lbId, finalScore);
   }, 600);
 }
 
@@ -1351,111 +1559,169 @@ function getGradeColor(grade) {
 // ============================================================
 // HUD
 // ============================================================
+function drawCooldownBar(x, y, w, h, pct, color, label) {
+  ctx.fillStyle = '#1a1a2e';
+  ctx.fillRect(x, y, w, h);
+  if (pct >= 1) {
+    ctx.fillStyle = color;
+    ctx.fillRect(x, y, w, h);
+  } else {
+    ctx.fillStyle = color + '44';
+    ctx.fillRect(x, y, w * pct, h);
+  }
+  ctx.strokeStyle = color + '66';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x, y, w, h);
+  ctx.fillStyle = COL.white;
+  ctx.font = '9px Courier New';
+  ctx.textAlign = 'center';
+  ctx.fillText(label, x + w / 2, y + 10);
+}
+
 function drawHUD() {
-  // Revenue (top-left)
-  // Smooth counter
+  // Smooth score counter
   if (displayScore < score) {
     const diff = score - displayScore;
     displayScore += Math.max(1, Math.ceil(diff * 0.1));
     if (displayScore > score) displayScore = score;
-    // Tick sound occasionally
     if (Math.random() < 0.15) playSound('tick');
   }
   if (displayScore > score) displayScore = score;
 
-  ctx.fillStyle = COL.green;
-  ctx.font = 'bold 16px Courier New';
-  ctx.textAlign = 'left';
-  ctx.fillText('CYVL REVENUE: $' + displayScore.toLocaleString(), 15, 25);
-
-  // Lives (below revenue)
-  ctx.fillStyle = COL.red;
-  ctx.font = '13px Courier New';
-  ctx.fillText('LIVES: ' + '\u2764 '.repeat(noahLives), 15, 44);
-
-  // Level name (top-center)
-  ctx.fillStyle = COL.cyan;
-  ctx.font = 'bold 18px Courier New';
-  ctx.textAlign = 'center';
-  ctx.fillText(LEVEL_NAMES[level - 1] || 'LEVEL ' + level, W / 2, 25);
-
-  // Level number
-  ctx.font = '12px Courier New';
-  ctx.fillStyle = COL.white + '88';
-  ctx.fillText('LEVEL ' + level + ' / ' + MAX_LEVEL, W / 2, 42);
-
-  // Timer (top-right)
-  const timerPct = Math.max(0, levelTimer / levelTime);
-  ctx.fillStyle = '#1a1a2e';
-  ctx.fillRect(W - 210, 12, 200, 16);
-  const timerColor = timerPct > 0.3 ? COL.cyan : (timerPct > 0.1 ? COL.orange : COL.red);
-  ctx.fillStyle = timerColor;
-  ctx.fillRect(W - 210, 12, 200 * timerPct, 16);
-  ctx.strokeStyle = timerColor + '88';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(W - 210, 12, 200, 16);
-  ctx.fillStyle = COL.white;
-  ctx.font = '10px Courier New';
-  ctx.textAlign = 'center';
-  ctx.fillText(Math.ceil(levelTimer) + 's', W - 110, 24);
-
-  // Sprint cooldown (bottom-left)
-  const sprintReady = noah.sprintCooldown <= 0;
-  ctx.fillStyle = '#1a1a2e';
-  ctx.fillRect(15, H - 35, 120, 14);
-  if (sprintReady) {
+  if (is2P()) {
+    // ---- 2P HUD ----
+    // Noah info (top-left, green)
     ctx.fillStyle = COL.green;
-    ctx.fillRect(15, H - 35, 120, 14);
-  } else {
-    ctx.fillStyle = COL.green + '44';
-    ctx.fillRect(15, H - 35, 120 * (1 - noah.sprintCooldown / 5), 14);
-  }
-  ctx.strokeStyle = COL.green + '66';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(15, H - 35, 120, 14);
-  ctx.fillStyle = COL.white;
-  ctx.font = '9px Courier New';
-  ctx.textAlign = 'center';
-  ctx.fillText(sprintReady ? 'SPRINT [SPACE]' : 'SPRINT ' + noah.sprintCooldown.toFixed(1) + 's', 75, H - 25);
-
-  // Pivot cooldown (bottom)
-  const pivotReady = noah.pivotCooldown <= 0;
-  ctx.fillStyle = '#1a1a2e';
-  ctx.fillRect(150, H - 35, 120, 14);
-  if (pivotReady) {
-    ctx.fillStyle = COL.purple;
-    ctx.fillRect(150, H - 35, 120, 14);
-  } else {
-    ctx.fillStyle = COL.purple + '44';
-    ctx.fillRect(150, H - 35, 120 * (1 - noah.pivotCooldown / 8), 14);
-  }
-  ctx.strokeStyle = COL.purple + '66';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(150, H - 35, 120, 14);
-  ctx.fillStyle = COL.white;
-  ctx.font = '9px Courier New';
-  ctx.textAlign = 'center';
-  ctx.fillText(pivotReady ? 'PIVOT [SHIFT]' : 'PIVOT ' + noah.pivotCooldown.toFixed(1) + 's', 210, H - 25);
-
-  // Coffee & Shield indicators
-  if (noah.coffeeTimer > 0) {
-    ctx.fillStyle = '#8B4513';
-    ctx.font = 'bold 12px Courier New';
+    ctx.font = 'bold 14px Courier New';
     ctx.textAlign = 'left';
-    ctx.fillText('COFFEE: ' + noah.coffeeTimer.toFixed(1) + 's', 300, H - 25);
-  }
-  if (noah.shieldTimer > 0) {
+    ctx.fillText('NOAH ' + '\u2764 '.repeat(Math.max(0, noahLives)), 15, 25);
+    ctx.font = '12px Courier New';
+    ctx.fillText('$' + displayScore.toLocaleString(), 15, 42);
+
+    // VP info (top-right, red)
+    ctx.fillStyle = COL.red;
+    ctx.font = 'bold 14px Courier New';
+    ctx.textAlign = 'right';
+    ctx.fillText('THE VP', W - 15, 25);
+
+    // Level name (top-center)
     ctx.fillStyle = COL.cyan;
-    ctx.font = 'bold 12px Courier New';
-    ctx.textAlign = 'left';
-    ctx.fillText('SHIELD: ' + noah.shieldTimer.toFixed(1) + 's', 440, H - 25);
-  }
+    ctx.font = 'bold 16px Courier New';
+    ctx.textAlign = 'center';
+    ctx.fillText(LEVEL_NAMES[level - 1] || 'LEVEL ' + level, W / 2, 25);
+    ctx.font = '11px Courier New';
+    ctx.fillStyle = COL.white + '88';
+    ctx.fillText('LEVEL ' + level + ' / ' + MAX_LEVEL, W / 2, 40);
 
-  // Dan counter (bottom-right)
-  ctx.fillStyle = COL.red;
-  ctx.font = 'bold 12px Courier New';
-  ctx.textAlign = 'right';
-  ctx.fillText('VPs: ' + dans.length, W - 15, H - 25);
+    // Timer (center below level)
+    const timerPct = Math.max(0, levelTimer / levelTime);
+    const timerW = 180;
+    const timerX = (W - timerW) / 2;
+    ctx.fillStyle = '#1a1a2e';
+    ctx.fillRect(timerX, 48, timerW, 12);
+    const timerColor = timerPct > 0.3 ? COL.cyan : (timerPct > 0.1 ? COL.orange : COL.red);
+    ctx.fillStyle = timerColor;
+    ctx.fillRect(timerX, 48, timerW * timerPct, 12);
+    ctx.strokeStyle = timerColor + '88';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(timerX, 48, timerW, 12);
+    ctx.fillStyle = COL.white;
+    ctx.font = '9px Courier New';
+    ctx.textAlign = 'center';
+    ctx.fillText(Math.ceil(levelTimer) + 's', W / 2, 58);
+
+    // Noah cooldowns (bottom-left)
+    const sprintPct = noah.sprintCooldown <= 0 ? 1 : (1 - noah.sprintCooldown / 5);
+    drawCooldownBar(15, H - 35, 100, 14, sprintPct, COL.green,
+      noah.sprintCooldown <= 0 ? 'SPRINT [SPACE]' : 'SPRINT ' + noah.sprintCooldown.toFixed(1) + 's');
+    const pivotPct = noah.pivotCooldown <= 0 ? 1 : (1 - noah.pivotCooldown / 8);
+    drawCooldownBar(125, H - 35, 100, 14, pivotPct, COL.purple,
+      noah.pivotCooldown <= 0 ? 'PIVOT [SHIFT]' : 'PIVOT ' + noah.pivotCooldown.toFixed(1) + 's');
+
+    // Coffee & Shield (bottom-center for Noah)
+    if (noah.coffeeTimer > 0) {
+      ctx.fillStyle = '#8B4513';
+      ctx.font = 'bold 10px Courier New';
+      ctx.textAlign = 'left';
+      ctx.fillText('COFFEE ' + noah.coffeeTimer.toFixed(1) + 's', 235, H - 25);
+    }
+    if (noah.shieldTimer > 0) {
+      ctx.fillStyle = COL.cyan;
+      ctx.font = 'bold 10px Courier New';
+      ctx.textAlign = 'left';
+      ctx.fillText('SHIELD ' + noah.shieldTimer.toFixed(1) + 's', 340, H - 25);
+    }
+
+    // VP cooldowns (bottom-right)
+    const meetPct = humanDanMeetingCD <= 0 ? 1 : (1 - humanDanMeetingCD / HUMAN_DAN_MEETING_CD);
+    drawCooldownBar(W - 335, H - 35, 100, 14, meetPct, COL.orange,
+      humanDanMeetingCD <= 0 ? 'TRAP [.]' : 'TRAP ' + humanDanMeetingCD.toFixed(1) + 's');
+    const emailPct = humanDanEmailCD <= 0 ? 1 : (1 - humanDanEmailCD / HUMAN_DAN_EMAIL_CD);
+    drawCooldownBar(W - 225, H - 35, 100, 14, emailPct, COL.red,
+      humanDanEmailCD <= 0 ? 'EMAIL [/]' : 'EMAIL ' + humanDanEmailCD.toFixed(1) + 's');
+    const reorgPct = humanDanReorgCD <= 0 ? 1 : (1 - humanDanReorgCD / HUMAN_DAN_REORG_CD);
+    drawCooldownBar(W - 115, H - 35, 100, 14, reorgPct, COL.purple,
+      humanDanReorgCD <= 0 ? 'REORG [RSHIFT]' : 'REORG ' + humanDanReorgCD.toFixed(1) + 's');
+
+  } else {
+    // ---- 1P HUD (unchanged) ----
+    ctx.fillStyle = COL.green;
+    ctx.font = 'bold 16px Courier New';
+    ctx.textAlign = 'left';
+    ctx.fillText('CYVL REVENUE: $' + displayScore.toLocaleString(), 15, 25);
+
+    ctx.fillStyle = COL.red;
+    ctx.font = '13px Courier New';
+    ctx.fillText('LIVES: ' + '\u2764 '.repeat(noahLives), 15, 44);
+
+    ctx.fillStyle = COL.cyan;
+    ctx.font = 'bold 18px Courier New';
+    ctx.textAlign = 'center';
+    ctx.fillText(LEVEL_NAMES[level - 1] || 'LEVEL ' + level, W / 2, 25);
+
+    ctx.font = '12px Courier New';
+    ctx.fillStyle = COL.white + '88';
+    ctx.fillText('LEVEL ' + level + ' / ' + MAX_LEVEL, W / 2, 42);
+
+    const timerPct = Math.max(0, levelTimer / levelTime);
+    ctx.fillStyle = '#1a1a2e';
+    ctx.fillRect(W - 210, 12, 200, 16);
+    const timerColor = timerPct > 0.3 ? COL.cyan : (timerPct > 0.1 ? COL.orange : COL.red);
+    ctx.fillStyle = timerColor;
+    ctx.fillRect(W - 210, 12, 200 * timerPct, 16);
+    ctx.strokeStyle = timerColor + '88';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(W - 210, 12, 200, 16);
+    ctx.fillStyle = COL.white;
+    ctx.font = '10px Courier New';
+    ctx.textAlign = 'center';
+    ctx.fillText(Math.ceil(levelTimer) + 's', W - 110, 24);
+
+    const sprintReady = noah.sprintCooldown <= 0;
+    drawCooldownBar(15, H - 35, 120, 14, sprintReady ? 1 : (1 - noah.sprintCooldown / 5), COL.green,
+      sprintReady ? 'SPRINT [SPACE]' : 'SPRINT ' + noah.sprintCooldown.toFixed(1) + 's');
+    const pivotReady = noah.pivotCooldown <= 0;
+    drawCooldownBar(150, H - 35, 120, 14, pivotReady ? 1 : (1 - noah.pivotCooldown / 8), COL.purple,
+      pivotReady ? 'PIVOT [SHIFT]' : 'PIVOT ' + noah.pivotCooldown.toFixed(1) + 's');
+
+    if (noah.coffeeTimer > 0) {
+      ctx.fillStyle = '#8B4513';
+      ctx.font = 'bold 12px Courier New';
+      ctx.textAlign = 'left';
+      ctx.fillText('COFFEE: ' + noah.coffeeTimer.toFixed(1) + 's', 300, H - 25);
+    }
+    if (noah.shieldTimer > 0) {
+      ctx.fillStyle = COL.cyan;
+      ctx.font = 'bold 12px Courier New';
+      ctx.textAlign = 'left';
+      ctx.fillText('SHIELD: ' + noah.shieldTimer.toFixed(1) + 's', 440, H - 25);
+    }
+
+    ctx.fillStyle = COL.red;
+    ctx.font = 'bold 12px Courier New';
+    ctx.textAlign = 'right';
+    ctx.fillText('VPs: ' + dans.length, W - 15, H - 25);
+  }
 }
 
 // ============================================================
@@ -1667,24 +1933,49 @@ function drawTitle() {
   ctx.lineTo(midX + 10, charY + 15);
   ctx.stroke();
 
-  // Instructions
-  ctx.fillStyle = COL.white;
-  ctx.font = 'bold 18px Courier New';
+  // Mode selection menu
+  const modes = ['1 PLAYER', '2P LOCAL', '2P ONLINE'];
+  const modeDescs = [
+    'Classic solo mode — dodge the AI VP',
+    'Same keyboard — one plays Noah, one plays the VP',
+    'Play online with a friend via room code',
+  ];
+  const modeY = 500;
   ctx.textAlign = 'center';
-  const blink = Math.sin(titleTime * 4) > 0;
-  if (blink) ctx.fillText('PRESS ENTER TO START', W / 2, 520);
+  for (let i = 0; i < modes.length; i++) {
+    const sel = i === titleSelection;
+    const unavailable = (i === 2 && typeof Peer === 'undefined');
+    ctx.fillStyle = unavailable ? '#333355' : (sel ? COL.gold : '#666688');
+    ctx.font = sel ? 'bold 20px Courier New' : '18px Courier New';
+    const prefix = sel ? '> ' : '  ';
+    ctx.fillText(prefix + modes[i] + (unavailable ? ' (UNAVAILABLE)' : ''), W / 2, modeY + i * 32);
+  }
+  // Mode description
+  ctx.fillStyle = '#888';
+  ctx.font = '11px Courier New';
+  ctx.fillText(modeDescs[titleSelection], W / 2, modeY + 105);
 
-  // Controls
+  // Controls hint based on selection
   ctx.fillStyle = '#666688';
   ctx.font = '12px Courier New';
-  ctx.fillText('WASD / ARROWS = Move    SPACE = Sprint    SHIFT / Right-Click = Pivot', W / 2, 570);
-  ctx.fillText('Collect contracts and deals. Avoid the VP at all costs!', W / 2, 590);
+  if (titleSelection === 0) {
+    ctx.fillText('WASD / ARROWS = Move    SPACE = Sprint    SHIFT = Pivot', W / 2, modeY + 130);
+  } else if (titleSelection === 1 || titleSelection === 2) {
+    ctx.fillText('NOAH: WASD + SPACE + SHIFT  |  VP: ARROWS + .  + /  + RSHIFT', W / 2, modeY + 130);
+  }
+
+  // "Select with arrows, Enter to confirm" hint
+  const blink = Math.sin(titleTime * 4) > 0;
+  if (blink) {
+    ctx.fillStyle = COL.white;
+    ctx.font = 'bold 14px Courier New';
+    ctx.fillText('UP/DOWN to select, ENTER to start', W / 2, modeY + 160);
+  }
 
   // Flavor text
   ctx.fillStyle = COL.cyan + '88';
   ctx.font = '10px Courier New';
-  ctx.fillText('The Closer collects revenue. The VP destroys budgets. Only one can win.', W / 2, 640);
-  ctx.fillText('"In the startup world, the VP of Product is the final boss." - Ancient Proverb', W / 2, 660);
+  ctx.fillText('The Closer collects revenue. The VP destroys budgets. Only one can win.', W / 2, 680);
 
   drawScanlines();
 }
@@ -1710,7 +2001,11 @@ function drawLevelComplete() {
   // Level complete
   ctx.fillStyle = COL.gold;
   ctx.font = 'bold 36px Courier New';
-  ctx.fillText(LEVEL_NAMES[level - 1] + ' COMPLETE!', W/2, 120);
+  if (is2P()) {
+    ctx.fillText('NOAH SURVIVED ' + (LEVEL_NAMES[level - 1] || 'LEVEL ' + level) + '!', W/2, 120);
+  } else {
+    ctx.fillText(LEVEL_NAMES[level - 1] + ' COMPLETE!', W/2, 120);
+  }
 
   // Revenue earned
   ctx.fillStyle = COL.green;
@@ -1743,7 +2038,11 @@ function drawLevelComplete() {
   if (level < MAX_LEVEL) {
     ctx.fillStyle = COL.orange;
     ctx.font = '14px Courier New';
-    ctx.fillText('NEXT: ' + LEVEL_NAMES[level] + ' (' + (level + 1) + ' VPs incoming!)', W/2, 480);
+    if (is2P()) {
+      ctx.fillText('NEXT: ' + LEVEL_NAMES[level] + ' — VP gets faster!', W/2, 480);
+    } else {
+      ctx.fillText('NEXT: ' + LEVEL_NAMES[level] + ' (' + (level + 1) + ' VPs incoming!)', W/2, 480);
+    }
   } else {
     ctx.fillStyle = COL.gold;
     ctx.font = 'bold 18px Courier New';
@@ -1783,20 +2082,38 @@ function drawGameOver() {
   const gradeColor = getGradeColor(grade);
 
   // Title
-  ctx.fillStyle = noahLives <= 0 ? COL.red : COL.gold;
-  ctx.font = 'bold 42px Courier New';
-  ctx.fillText(noahLives <= 0 ? 'BUDGET BRAWL OVER' : 'BUDGET BRAWL COMPLETE', W/2, 100);
+  if (is2P()) {
+    if (vpWon) {
+      ctx.fillStyle = COL.red;
+      ctx.font = 'bold 42px Courier New';
+      ctx.fillText('THE VP WINS!', W/2, 90);
+      ctx.fillStyle = COL.orange;
+      ctx.font = 'bold 22px Courier New';
+      ctx.fillText('Budget destroyed. The Closer has been managed.', W/2, 130);
+    } else {
+      ctx.fillStyle = COL.green;
+      ctx.font = 'bold 42px Courier New';
+      ctx.fillText('THE CLOSER WINS!', W/2, 90);
+      ctx.fillStyle = COL.gold;
+      ctx.font = 'bold 22px Courier New';
+      ctx.fillText('Revenue secured. The VP could not stop the money.', W/2, 130);
+    }
+  } else {
+    ctx.fillStyle = noahLives <= 0 ? COL.red : COL.gold;
+    ctx.font = 'bold 42px Courier New';
+    ctx.fillText(noahLives <= 0 ? 'BUDGET BRAWL OVER' : 'BUDGET BRAWL COMPLETE', W/2, 100);
+  }
 
   // Final revenue
   ctx.fillStyle = COL.green;
   ctx.font = 'bold 30px Courier New';
-  ctx.fillText('FINAL REVENUE: $' + score.toLocaleString(), W/2, 180);
+  ctx.fillText('FINAL REVENUE: $' + score.toLocaleString(), W/2, 190);
 
   // Company valuation
   const valuation = score * 10;
   ctx.fillStyle = COL.cyan;
   ctx.font = 'bold 22px Courier New';
-  ctx.fillText('COMPANY VALUATION: $' + valuation.toLocaleString(), W/2, 225);
+  ctx.fillText('COMPANY VALUATION: $' + valuation.toLocaleString(), W/2, 230);
 
   // Grade
   ctx.fillStyle = gradeColor;
@@ -1818,19 +2135,25 @@ function drawGameOver() {
   // Fun stats
   ctx.fillStyle = '#888';
   ctx.font = '12px Courier New';
-  ctx.fillText('VPs defeated: 0 (they always come back)', W/2, 440);
-  ctx.fillText('Meetings survived: too many', W/2, 460);
-  ctx.fillText('Emails dodged: not enough', W/2, 480);
+  if (is2P()) {
+    ctx.fillText('Noah lives remaining: ' + Math.max(0, noahLives), W/2, 440);
+    ctx.fillText('Levels survived: ' + Math.min(level, MAX_LEVEL), W/2, 460);
+    ctx.fillText(vpWon ? 'The VP sends their regards.' : 'The Closer sends their invoice.', W/2, 480);
+  } else {
+    ctx.fillText('VPs defeated: 0 (they always come back)', W/2, 440);
+    ctx.fillText('Meetings survived: too many', W/2, 460);
+    ctx.fillText('Emails dodged: not enough', W/2, 480);
+  }
 
   // Dan's final quote
   ctx.fillStyle = COL.red;
   ctx.font = 'italic 14px Courier New';
-  ctx.fillText('The VP: "I\'ll see you at the next quarterly review."', W/2, 530);
+  ctx.fillText(is2P() && vpWon ? 'The VP: "Maybe next time, try a pivot."' : 'The VP: "I\'ll see you at the next quarterly review."', W/2, 530);
 
   // Closer's final quote
   ctx.fillStyle = COL.green;
   ctx.font = 'italic 14px Courier New';
-  ctx.fillText('The Closer: "I need a raise. And a vacation."', W/2, 560);
+  ctx.fillText(is2P() && !vpWon ? 'The Closer: "Revenue always finds a way."' : 'The Closer: "I need a raise. And a vacation."', W/2, 560);
 
   // Press Enter
   const blink = Math.sin(performance.now() / 300) > 0;
@@ -1839,6 +2162,263 @@ function drawGameOver() {
     ctx.font = 'bold 18px Courier New';
     ctx.fillText('PRESS ENTER FOR TITLE SCREEN', W/2, 630);
   }
+
+  drawScanlines();
+}
+
+// ============================================================
+// ONLINE MULTIPLAYER (PeerJS)
+// ============================================================
+function generateRoomCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  let code = '';
+  for (let i = 0; i < 4; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  return code;
+}
+
+function cleanupPeer() {
+  if (conn) { try { conn.close(); } catch(e) {} conn = null; }
+  if (peer) { try { peer.destroy(); } catch(e) {} peer = null; }
+  onlineState = 'NONE';
+  remoteInputs = {};
+}
+
+function createRoom() {
+  roomCode = generateRoomCode();
+  onlineState = 'CREATING';
+  isHost = true;
+  try {
+    peer = new Peer('budgetbrawl-' + roomCode.toLowerCase());
+    peer.on('open', () => { onlineState = 'WAITING'; });
+    peer.on('connection', (connection) => {
+      conn = connection;
+      conn.on('open', () => {
+        onlineState = 'CONNECTED';
+        setTimeout(() => startGame(), 500);
+      });
+      conn.on('data', (data) => {
+        if (data.type === 'input') remoteInputs = data.keys;
+        if (data.type === 'ability') {
+          if (data.action === 'trap') humanDanMeetingTrap();
+          if (data.action === 'email') humanDanEmailBomb();
+          if (data.action === 'reorg') humanDanReorg();
+        }
+      });
+      conn.on('close', () => handleDisconnect());
+    });
+    peer.on('error', (err) => {
+      console.error('PeerJS error:', err);
+      onlineState = 'ERROR';
+    });
+  } catch (e) {
+    onlineState = 'ERROR';
+  }
+}
+
+function joinRoom(code) {
+  onlineState = 'JOINING_CONNECTING';
+  isHost = false;
+  roomCode = code;
+  try {
+    peer = new Peer();
+    peer.on('open', () => {
+      conn = peer.connect('budgetbrawl-' + code.toLowerCase());
+      conn.on('open', () => { onlineState = 'CONNECTED'; });
+      conn.on('data', (data) => {
+        if (data.type === 'state') receiveGameState(data);
+      });
+      conn.on('close', () => handleDisconnect());
+    });
+    peer.on('error', (err) => {
+      console.error('PeerJS error:', err);
+      onlineState = 'ERROR';
+    });
+  } catch (e) {
+    onlineState = 'ERROR';
+  }
+}
+
+function handleDisconnect() {
+  if (gameState === STATE.PLAYING || gameState === STATE.LEVEL_COMPLETE) {
+    showFlash('OPPONENT DISCONNECTED', COL.red, 3);
+    // Fall back to 1P with AI
+    gameMode = '1P';
+    // Convert human Dan to AI Dan (already has the right shape)
+  }
+  cleanupPeer();
+}
+
+function sendGameState() {
+  if (!conn || !conn.open) return;
+  conn.send({
+    type: 'state',
+    noahX: noah.x, noahY: noah.y, noahDirX: noah.dirX, noahDirY: noah.dirY,
+    noahStun: noah.stunTimer, noahCoffee: noah.coffeeTimer, noahShield: noah.shieldTimer,
+    noahSprint: noah.isSprinting, noahSprintCD: noah.sprintCooldown,
+    noahPivotCD: noah.pivotCooldown, noahSlow: noah.slowTimer, noahFrozen: noah.frozenTimer,
+    danX: dans[0] ? dans[0].x : 0, danY: dans[0] ? dans[0].y : 0,
+    danDance: dans[0] ? dans[0].dancingTimer : 0, danDanceY: dans[0] ? dans[0].danceY : 0,
+    collectibles: collectibles.map(c => ({ x: c.x, y: c.y, type: c.type, timer: c.timer, pulse: c.pulse, value: c.value, radius: c.radius, color: c.color })),
+    meetingTraps: meetingTraps.map(t => ({ x: t.x, y: t.y, timer: t.timer, radius: t.radius })),
+    emailBombs: emailBombs.map(e => ({ x: e.x, y: e.y, vx: e.vx, vy: e.vy, life: e.life })),
+    score, displayScore, noahLives, level, levelTimer,
+    flashText, flashTimer, flashColor,
+    gs: gameState,
+    meetCD: humanDanMeetingCD, emailCD: humanDanEmailCD, reorgCD: humanDanReorgCD,
+    vpWon,
+  });
+}
+
+function receiveGameState(s) {
+  // Guest applies authoritative state from host
+  noah.x = s.noahX; noah.y = s.noahY;
+  noah.dirX = s.noahDirX; noah.dirY = s.noahDirY;
+  noah.stunTimer = s.noahStun; noah.coffeeTimer = s.noahCoffee;
+  noah.shieldTimer = s.noahShield; noah.isSprinting = s.noahSprint;
+  noah.sprintCooldown = s.noahSprintCD; noah.pivotCooldown = s.noahPivotCD;
+  noah.slowTimer = s.noahSlow; noah.frozenTimer = s.noahFrozen;
+  if (dans[0]) {
+    dans[0].x = s.danX; dans[0].y = s.danY;
+    dans[0].dancingTimer = s.danDance; dans[0].danceY = s.danDanceY;
+  }
+  collectibles = s.collectibles || [];
+  meetingTraps = s.meetingTraps || [];
+  emailBombs = s.emailBombs || [];
+  score = s.score; displayScore = s.displayScore;
+  noahLives = s.noahLives; level = s.level; levelTimer = s.levelTimer;
+  flashText = s.flashText; flashTimer = s.flashTimer; flashColor = s.flashColor;
+  humanDanMeetingCD = s.meetCD; humanDanEmailCD = s.emailCD; humanDanReorgCD = s.reorgCD;
+  vpWon = s.vpWon;
+  if (s.gs !== undefined && s.gs !== gameState) {
+    gameState = s.gs;
+    if (gameState === STATE.PLAYING && dans.length === 0) {
+      dans = [createDan()];
+    }
+  }
+}
+
+function sendInputToHost() {
+  if (!conn || !conn.open) return;
+  conn.send({
+    type: 'input',
+    keys: {
+      up: keys['ArrowUp'] || false,
+      down: keys['ArrowDown'] || false,
+      left: keys['ArrowLeft'] || false,
+      right: keys['ArrowRight'] || false,
+    }
+  });
+}
+
+function updateNetwork(dt) {
+  if (isHost) {
+    netSendTimer -= dt;
+    if (netSendTimer <= 0) {
+      netSendTimer = 0.05; // 20Hz
+      sendGameState();
+    }
+  } else {
+    // Guest: send inputs and skip simulation
+    sendInputToHost();
+  }
+}
+
+// Online lobby screen
+function drawOnlineLobby() {
+  ctx.fillStyle = COL.bg;
+  ctx.fillRect(0, 0, W, H);
+
+  // Background grid
+  ctx.strokeStyle = '#1a1a3a';
+  ctx.lineWidth = 1;
+  const gridSize = 40;
+  const offset = (performance.now() / 80) % gridSize;
+  for (let x = -gridSize + offset; x < W + gridSize; x += gridSize) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+  }
+
+  ctx.textAlign = 'center';
+
+  // Title
+  ctx.fillStyle = COL.gold;
+  ctx.font = 'bold 36px Courier New';
+  ctx.fillText('BUDGET BRAWL', W/2, 100);
+  ctx.fillStyle = COL.cyan;
+  ctx.font = 'bold 22px Courier New';
+  ctx.fillText('ONLINE MATCH', W/2, 135);
+
+  if (onlineState === 'NONE') {
+    ctx.fillStyle = COL.green;
+    ctx.font = 'bold 20px Courier New';
+    ctx.fillText('[C] CREATE ROOM (play as Noah)', W/2, 260);
+    ctx.fillStyle = COL.red;
+    ctx.fillText('[J] JOIN ROOM (play as the VP)', W/2, 310);
+    ctx.fillStyle = '#666';
+    ctx.font = '14px Courier New';
+    ctx.fillText('Host plays as The Closer, Guest plays as The VP', W/2, 380);
+  } else if (onlineState === 'CREATING') {
+    ctx.fillStyle = COL.yellow;
+    ctx.font = 'bold 18px Courier New';
+    ctx.fillText('Creating room...', W/2, 280);
+  } else if (onlineState === 'WAITING') {
+    ctx.fillStyle = COL.green;
+    ctx.font = 'bold 28px Courier New';
+    ctx.fillText('ROOM CODE:', W/2, 250);
+    ctx.fillStyle = COL.gold;
+    ctx.font = 'bold 64px Courier New';
+    ctx.fillText(roomCode, W/2, 330);
+    ctx.fillStyle = COL.white;
+    ctx.font = '16px Courier New';
+    const blink = Math.sin(performance.now() / 300) > 0;
+    if (blink) ctx.fillText('Waiting for opponent to join...', W/2, 400);
+    ctx.fillStyle = '#666';
+    ctx.font = '13px Courier New';
+    ctx.fillText('Share this code with your opponent', W/2, 440);
+  } else if (onlineState === 'JOINING') {
+    ctx.fillStyle = COL.red;
+    ctx.font = 'bold 22px Courier New';
+    ctx.fillText('ENTER ROOM CODE:', W/2, 250);
+    // Draw input box
+    ctx.fillStyle = '#1a1a2e';
+    ctx.fillRect(W/2 - 100, 270, 200, 60);
+    ctx.strokeStyle = COL.cyan;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(W/2 - 100, 270, 200, 60);
+    ctx.fillStyle = COL.gold;
+    ctx.font = 'bold 48px Courier New';
+    ctx.fillText(roomInput + (roomInput.length < 4 ? '_' : ''), W/2, 313);
+    if (roomInput.length === 4) {
+      ctx.fillStyle = COL.white;
+      ctx.font = '16px Courier New';
+      const blink = Math.sin(performance.now() / 300) > 0;
+      if (blink) ctx.fillText('Press ENTER to connect', W/2, 370);
+    }
+  } else if (onlineState === 'JOINING_CONNECTING') {
+    ctx.fillStyle = COL.yellow;
+    ctx.font = 'bold 18px Courier New';
+    ctx.fillText('Connecting to room ' + roomCode + '...', W/2, 300);
+  } else if (onlineState === 'CONNECTED') {
+    ctx.fillStyle = COL.green;
+    ctx.font = 'bold 24px Courier New';
+    ctx.fillText('CONNECTED!', W/2, 280);
+    ctx.font = '18px Courier New';
+    ctx.fillText('Starting game...', W/2, 320);
+  } else if (onlineState === 'ERROR') {
+    ctx.fillStyle = COL.red;
+    ctx.font = 'bold 22px Courier New';
+    ctx.fillText('CONNECTION FAILED', W/2, 280);
+    ctx.fillStyle = '#888';
+    ctx.font = '14px Courier New';
+    ctx.fillText('The room may not exist, or the connection timed out.', W/2, 320);
+    ctx.fillStyle = COL.white;
+    ctx.font = '16px Courier New';
+    ctx.fillText('Press ENTER to try again, or ESC for title', W/2, 370);
+  }
+
+  // ESC to go back
+  ctx.fillStyle = '#555';
+  ctx.font = '12px Courier New';
+  ctx.fillText('[ESC] Back to title', W/2, H - 30);
 
   drawScanlines();
 }
@@ -1859,6 +2439,28 @@ function gameLoop(now) {
       break;
 
     case STATE.PLAYING:
+      // Online guest: render-only (host sends authoritative state)
+      if (gameMode === '2P_ONLINE' && !isHost) {
+        updateNetwork(dt);
+        roadDashOffset = (roadDashOffset + dt * 30) % 20;
+        updateParticles(dt);
+        drawMap();
+        drawTraps();
+        drawCollectibles();
+        drawParticles();
+        drawNoah();
+        for (const dan of dans) drawDan(dan);
+        drawHUD();
+        drawFlashText();
+        drawScanlines();
+        // Online indicator
+        ctx.fillStyle = COL.green;
+        ctx.font = '10px Courier New';
+        ctx.textAlign = 'right';
+        ctx.fillText('ONLINE (VP)', W - 10, H - 5);
+        break;
+      }
+
       // Update
       roadDashOffset = (roadDashOffset + dt * 30) % 20;
       flashTimer = Math.max(0, flashTimer - dt);
@@ -1878,6 +2480,7 @@ function gameLoop(now) {
       if (levelTimer <= 0) {
         levelTimer = 0;
         if (level >= MAX_LEVEL) {
+          vpWon = false; // Timer expired = Noah survived
           endGame();
         } else {
           gameState = STATE.LEVEL_COMPLETE;
@@ -1885,8 +2488,15 @@ function gameLoop(now) {
         }
       }
 
+      // Online: send game state (host)
+      if (gameMode === '2P_ONLINE') updateNetwork(dt);
+
       updateNoah(dt);
-      for (const dan of dans) updateDan(dan, dt);
+      if (is2P()) {
+        for (const dan of dans) updateHumanDan(dan, dt);
+      } else {
+        for (const dan of dans) updateDan(dan, dt);
+      }
       updateCollectibles(dt);
       updateTraps(dt);
       checkDanCollisions();
@@ -1902,6 +2512,13 @@ function gameLoop(now) {
       drawHUD();
       drawFlashText();
       drawScanlines();
+      // Host online indicator
+      if (gameMode === '2P_ONLINE' && isHost) {
+        ctx.fillStyle = COL.green;
+        ctx.font = '10px Courier New';
+        ctx.textAlign = 'right';
+        ctx.fillText('ONLINE (NOAH)', W - 10, H - 5);
+      }
 
       if (shakeDuration > 0 || shakeDuration + dt > 0) {
         ctx.restore();
@@ -1914,6 +2531,10 @@ function gameLoop(now) {
 
     case STATE.GAME_OVER:
       drawGameOver();
+      break;
+
+    case STATE.ONLINE_LOBBY:
+      drawOnlineLobby();
       break;
   }
 }
