@@ -2187,14 +2187,25 @@ function createRoom() {
   roomCode = generateRoomCode();
   onlineState = 'CREATING';
   isHost = true;
+  const peerId = 'budgetbrawl-' + roomCode.toLowerCase();
   try {
-    peer = new Peer('budgetbrawl-' + roomCode.toLowerCase());
-    peer.on('open', () => { onlineState = 'WAITING'; });
+    peer = new Peer(peerId, { debug: 0 });
+    peer.on('open', (id) => {
+      console.log('Host peer open:', id);
+      onlineState = 'WAITING';
+    });
     peer.on('connection', (connection) => {
       conn = connection;
+      console.log('Guest connecting...');
       conn.on('open', () => {
+        console.log('Data channel open (host)');
         onlineState = 'CONNECTED';
-        setTimeout(() => startGame(), 500);
+        // Initialize guest: send a 'start' signal, then begin
+        setTimeout(() => {
+          startGame();
+          // Immediately send first state so guest can initialize
+          sendGameState();
+        }, 600);
       });
       conn.on('data', (data) => {
         if (data.type === 'input') remoteInputs = data.keys;
@@ -2205,12 +2216,20 @@ function createRoom() {
         }
       });
       conn.on('close', () => handleDisconnect());
+      conn.on('error', (err) => console.error('Conn error (host):', err));
     });
     peer.on('error', (err) => {
-      console.error('PeerJS error:', err);
+      console.error('PeerJS error (host):', err);
+      if (err.type === 'unavailable-id') {
+        // Room code collision — retry with a new code
+        try { peer.destroy(); } catch(e) {}
+        createRoom();
+        return;
+      }
       onlineState = 'ERROR';
     });
   } catch (e) {
+    console.error('createRoom exception:', e);
     onlineState = 'ERROR';
   }
 }
@@ -2219,21 +2238,40 @@ function joinRoom(code) {
   onlineState = 'JOINING_CONNECTING';
   isHost = false;
   roomCode = code;
+  const hostId = 'budgetbrawl-' + code.toLowerCase();
   try {
-    peer = new Peer();
-    peer.on('open', () => {
-      conn = peer.connect('budgetbrawl-' + code.toLowerCase());
-      conn.on('open', () => { onlineState = 'CONNECTED'; });
+    peer = new Peer(undefined, { debug: 0 });
+    peer.on('open', (myId) => {
+      console.log('Guest peer open:', myId);
+      conn = peer.connect(hostId, { reliable: true });
+      if (!conn) {
+        console.error('peer.connect returned null');
+        onlineState = 'ERROR';
+        return;
+      }
+      conn.on('open', () => {
+        console.log('Data channel open (guest)');
+        onlineState = 'CONNECTED';
+        // Guest initializes its local state — will be overwritten by host state
+        noahLives = 3;
+        dans = [createDan()];
+        generateBuildings();
+      });
       conn.on('data', (data) => {
         if (data.type === 'state') receiveGameState(data);
       });
       conn.on('close', () => handleDisconnect());
+      conn.on('error', (err) => {
+        console.error('Conn error (guest):', err);
+        onlineState = 'ERROR';
+      });
     });
     peer.on('error', (err) => {
-      console.error('PeerJS error:', err);
+      console.error('PeerJS error (guest):', err);
       onlineState = 'ERROR';
     });
   } catch (e) {
+    console.error('joinRoom exception:', e);
     onlineState = 'ERROR';
   }
 }
@@ -2271,6 +2309,12 @@ function sendGameState() {
 
 function receiveGameState(s) {
   // Guest applies authoritative state from host
+  // Ensure dans array exists for guest
+  if (dans.length === 0) {
+    dans = [createDan()];
+    generateBuildings();
+  }
+
   noah.x = s.noahX; noah.y = s.noahY;
   noah.dirX = s.noahDirX; noah.dirY = s.noahDirY;
   noah.stunTimer = s.noahStun; noah.coffeeTimer = s.noahCoffee;
@@ -2289,11 +2333,11 @@ function receiveGameState(s) {
   flashText = s.flashText; flashTimer = s.flashTimer; flashColor = s.flashColor;
   humanDanMeetingCD = s.meetCD; humanDanEmailCD = s.emailCD; humanDanReorgCD = s.reorgCD;
   vpWon = s.vpWon;
+
+  // Transition game state (e.g. ONLINE_LOBBY -> PLAYING on first state received)
   if (s.gs !== undefined && s.gs !== gameState) {
+    console.log('Guest state transition:', gameState, '->', s.gs);
     gameState = s.gs;
-    if (gameState === STATE.PLAYING && dans.length === 0) {
-      dans = [createDan()];
-    }
   }
 }
 
