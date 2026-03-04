@@ -2189,7 +2189,7 @@ function createRoom() {
   isHost = true;
   const peerId = 'budgetbrawl-' + roomCode.toLowerCase();
   try {
-    peer = new Peer(peerId, { debug: 0 });
+    peer = new Peer(peerId, { debug: 0, serialization: 'json' });
     peer.on('open', (id) => {
       console.log('Host peer open:', id);
       onlineState = 'WAITING';
@@ -2240,7 +2240,7 @@ function joinRoom(code) {
   roomCode = code;
   const hostId = 'budgetbrawl-' + code.toLowerCase();
   try {
-    peer = new Peer(undefined, { debug: 0 });
+    peer = new Peer(undefined, { debug: 0, serialization: 'json' });
     peer.on('open', (myId) => {
       console.log('Guest peer open:', myId);
       conn = peer.connect(hostId, { reliable: true });
@@ -2307,37 +2307,46 @@ function sendGameState() {
   });
 }
 
+let guestPacketsReceived = 0;
+let guestLastError = '';
+
 function receiveGameState(s) {
-  // Guest applies authoritative state from host
-  // Ensure dans array exists for guest
-  if (dans.length === 0) {
-    dans = [createDan()];
-    generateBuildings();
-  }
+  try {
+    guestPacketsReceived++;
 
-  noah.x = s.noahX; noah.y = s.noahY;
-  noah.dirX = s.noahDirX; noah.dirY = s.noahDirY;
-  noah.stunTimer = s.noahStun; noah.coffeeTimer = s.noahCoffee;
-  noah.shieldTimer = s.noahShield; noah.isSprinting = s.noahSprint;
-  noah.sprintCooldown = s.noahSprintCD; noah.pivotCooldown = s.noahPivotCD;
-  noah.slowTimer = s.noahSlow; noah.frozenTimer = s.noahFrozen;
-  if (dans[0]) {
-    dans[0].x = s.danX; dans[0].y = s.danY;
-    dans[0].dancingTimer = s.danDance; dans[0].danceY = s.danDanceY;
-  }
-  collectibles = s.collectibles || [];
-  meetingTraps = s.meetingTraps || [];
-  emailBombs = s.emailBombs || [];
-  score = s.score; displayScore = s.displayScore;
-  noahLives = s.noahLives; level = s.level; levelTimer = s.levelTimer;
-  flashText = s.flashText; flashTimer = s.flashTimer; flashColor = s.flashColor;
-  humanDanMeetingCD = s.meetCD; humanDanEmailCD = s.emailCD; humanDanReorgCD = s.reorgCD;
-  vpWon = s.vpWon;
+    // Ensure dans array exists for guest
+    if (dans.length === 0) {
+      dans = [createDan()];
+      generateBuildings();
+    }
 
-  // Transition game state (e.g. ONLINE_LOBBY -> PLAYING on first state received)
-  if (s.gs !== undefined && s.gs !== gameState) {
-    console.log('Guest state transition:', gameState, '->', s.gs);
-    gameState = s.gs;
+    noah.x = s.noahX; noah.y = s.noahY;
+    noah.dirX = s.noahDirX; noah.dirY = s.noahDirY;
+    noah.stunTimer = s.noahStun; noah.coffeeTimer = s.noahCoffee;
+    noah.shieldTimer = s.noahShield; noah.isSprinting = s.noahSprint;
+    noah.sprintCooldown = s.noahSprintCD; noah.pivotCooldown = s.noahPivotCD;
+    noah.slowTimer = s.noahSlow; noah.frozenTimer = s.noahFrozen;
+    if (dans[0]) {
+      dans[0].x = s.danX; dans[0].y = s.danY;
+      dans[0].dancingTimer = s.danDance; dans[0].danceY = s.danDanceY;
+    }
+    collectibles = s.collectibles || [];
+    meetingTraps = s.meetingTraps || [];
+    emailBombs = s.emailBombs || [];
+    score = s.score; displayScore = s.displayScore;
+    noahLives = s.noahLives; level = s.level; levelTimer = s.levelTimer;
+    flashText = s.flashText || ''; flashTimer = s.flashTimer || 0; flashColor = s.flashColor || COL.red;
+    humanDanMeetingCD = s.meetCD; humanDanEmailCD = s.emailCD; humanDanReorgCD = s.reorgCD;
+    vpWon = s.vpWon;
+
+    // Transition game state (e.g. ONLINE_LOBBY -> PLAYING on first state received)
+    if (s.gs !== undefined && s.gs !== gameState) {
+      console.log('Guest state transition:', gameState, '->', s.gs);
+      gameState = s.gs;
+    }
+  } catch (err) {
+    guestLastError = err.message;
+    console.error('receiveGameState error:', err);
   }
 }
 
@@ -2459,10 +2468,18 @@ function drawOnlineLobby() {
     ctx.fillText('Press ENTER to try again, or ESC for title', W/2, 370);
   }
 
+  // Debug info
+  ctx.fillStyle = '#444';
+  ctx.font = '10px Courier New';
+  ctx.textAlign = 'left';
+  ctx.fillText('state: ' + onlineState + ' | isHost: ' + isHost + ' | peer: ' + (peer ? 'yes' : 'no') + ' | conn: ' + (conn ? (conn.open ? 'open' : 'exists') : 'no'), 10, H - 50);
+  ctx.fillText('gameState: ' + gameState + ' | packets: ' + guestPacketsReceived + (guestLastError ? ' | ERR: ' + guestLastError : ''), 10, H - 38);
+  ctx.textAlign = 'center';
+
   // ESC to go back
   ctx.fillStyle = '#555';
   ctx.font = '12px Courier New';
-  ctx.fillText('[ESC] Back to title', W/2, H - 30);
+  ctx.fillText('[ESC] Back to title', W/2, H - 20);
 
   drawScanlines();
 }
