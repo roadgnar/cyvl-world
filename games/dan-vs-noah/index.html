@@ -307,25 +307,30 @@ window.addEventListener('keydown', e => {
 
   // --- PLAYING ---
   if (gameState === STATE.PLAYING) {
+    // Prevent default on game keys to stop browser scrolling/behavior
+    if (['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','ShiftLeft','ShiftRight','Period','Slash'].includes(e.code)) {
+      e.preventDefault();
+    }
+
     // Noah (P1): Space = sprint, ShiftLeft = pivot (always)
-    if (e.code === 'Space') { e.preventDefault(); noahSprint(); }
-    if (e.code === 'ShiftLeft') { e.preventDefault(); noahPivot(); }
+    if (e.code === 'Space') noahSprint();
+    if (e.code === 'ShiftLeft') noahPivot();
 
     // In 1P, ShiftRight also works for pivot
-    if (!is2P() && e.code === 'ShiftRight') { e.preventDefault(); noahPivot(); }
+    if (!is2P() && e.code === 'ShiftRight') noahPivot();
 
     // VP (P2) abilities in 2P local
     if (is2P() && gameMode === '2P_LOCAL') {
       if (e.code === 'Period') humanDanMeetingTrap();
       if (e.code === 'Slash') humanDanEmailBomb();
-      if (e.code === 'ShiftRight') { e.preventDefault(); humanDanReorg(); }
+      if (e.code === 'ShiftRight') humanDanReorg();
     }
 
     // VP (P2) abilities in 2P online — guest sends to host
     if (gameMode === '2P_ONLINE' && !isHost && conn && conn.open) {
       if (e.code === 'Period') conn.send({ type: 'ability', action: 'trap' });
       if (e.code === 'Slash') conn.send({ type: 'ability', action: 'email' });
-      if (e.code === 'ShiftRight') { e.preventDefault(); conn.send({ type: 'ability', action: 'reorg' }); }
+      if (e.code === 'ShiftRight') conn.send({ type: 'ability', action: 'reorg' });
     }
   }
 });
@@ -2189,7 +2194,17 @@ function createRoom() {
   isHost = true;
   const peerId = 'budgetbrawl-' + roomCode.toLowerCase();
   try {
-    peer = new Peer(peerId, { debug: 0, serialization: 'json' });
+    peer = new Peer(peerId, {
+      debug: 0, serialization: 'json',
+      config: { iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'turn:freestun.net:3478', username: 'free', credential: 'free' },
+        { urls: 'turn:freestun.net:5349', username: 'free', credential: 'free' },
+        { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+        { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
+      ]}
+    });
     peer.on('open', (id) => {
       console.log('Host peer open:', id);
       onlineState = 'WAITING';
@@ -2240,7 +2255,17 @@ function joinRoom(code) {
   roomCode = code;
   const hostId = 'budgetbrawl-' + code.toLowerCase();
   try {
-    peer = new Peer(undefined, { debug: 0, serialization: 'json' });
+    peer = new Peer(undefined, {
+      debug: 0, serialization: 'json',
+      config: { iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'turn:freestun.net:3478', username: 'free', credential: 'free' },
+        { urls: 'turn:freestun.net:5349', username: 'free', credential: 'free' },
+        { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+        { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
+      ]}
+    });
     peer.on('open', (myId) => {
       console.log('Guest peer open:', myId);
       conn = peer.connect(hostId, { reliable: true });
